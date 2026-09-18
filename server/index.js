@@ -9,6 +9,14 @@ import rateLimit from 'express-rate-limit'
 
 import connectDB from './config/db.js'
 import logger from './config/logger.js'
+
+// ── v2 Agent System ────────────────────────────────────────────────────────
+import { registerMongoDBTools } from './mcp/mongodb.mcp.js'
+import { registerResumeTools } from './mcp/resume.mcp.js'
+import { registerJudge0Tools } from './mcp/judge0.mcp.js'
+import { registerCloudinaryTools } from './mcp/cloudinary.mcp.js'
+import { registerNotificationTools, setSocketHelpers } from './mcp/notification.mcp.js'
+import agentRoutes from './routes/agent.routes.js'
 import { registerInterviewSockets } from './sockets/interview.socket.js'
 import { registerNotificationSockets } from './sockets/notification.socket.js'
 
@@ -23,6 +31,7 @@ import interviewRoutes from './routes/interview.routes.js'
 import aiRoutes from './routes/ai.routes.js'
 import uploadRoutes from './routes/upload.routes.js'
 import codingTestRoutes from './routes/codingTest.routes.js'
+import dashboardRoutes from './routes/dashboard.routes.js'
 
 
 // ── App bootstrap ──────────────────────────────────────────────────────────
@@ -46,8 +55,19 @@ const { pushToUser, broadcastToRecruiters } = registerNotificationSockets(io)
 app.set('pushToUser', pushToUser)
 app.set('broadcastToRecruiters', broadcastToRecruiters)
 
+// Inject Socket helpers into notification MCP tools (decoupled boot)
+setSocketHelpers(pushToUser, broadcastToRecruiters)
+
 // ── Database ───────────────────────────────────────────────────────────────
 connectDB()
+
+// ── Register MCP Tools (after DB ready) ────────────────────────────────────
+registerMongoDBTools()
+registerResumeTools()
+registerJudge0Tools()
+registerCloudinaryTools()
+registerNotificationTools()
+logger.info('✅ MCP tools registered')
 
 // ── Security Middleware ────────────────────────────────────────────────────
 app.use(helmet({
@@ -102,6 +122,8 @@ app.use('/api/interview', interviewRoutes)
 app.use('/api/ai', aiRoutes)
 app.use('/api/upload', uploadRoutes)
 app.use('/api/coding-test', codingTestRoutes)
+app.use('/api/dashboard', dashboardRoutes)
+app.use('/api/agents', agentRoutes)
 
 // ── Health Check ───────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
@@ -109,8 +131,9 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     service: 'NextHire AI API',
-    version: process.env.npm_package_version || '1.0.0',
+    version: process.env.npm_package_version || '2.0.0',
     env: process.env.NODE_ENV || 'development',
+    architecture: 'multi-agent-mcp-vectorless',
   })
 })
 
@@ -139,10 +162,11 @@ app.use((err, req, res, _next) => {
 const PORT = process.env.PORT || 5000
 
 httpServer.listen(PORT, '0.0.0.0', () => {
-  logger.info(`🚀 NextHire AI Server started`, {
+  logger.info(`🚀 NextHire AI v2 Server started`, {
     port: PORT,
     env: process.env.NODE_ENV || 'development',
     url: `http://0.0.0.0:${PORT}`,
+    architecture: 'Multi-Agent + MCP + Vectorless',
   })
 })
 

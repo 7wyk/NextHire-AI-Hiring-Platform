@@ -8,15 +8,12 @@ import {
 import api from '../../services/api'
 import toast from 'react-hot-toast'
 
-const STATUSES = ['applied', 'screening', 'interview', 'shortlisted', 'rejected', 'hired']
+const STATUSES = ['applied', 'screening', 'interview']
 
 const statusStyles = {
   applied:     'badge bg-slate-500/15 text-slate-300 border-slate-500/25',
   screening:   'badge-warning',
   interview:   'badge-primary',
-  shortlisted: 'badge-success',
-  rejected:    'badge-danger',
-  hired:       'badge bg-emerald-400/15 text-emerald-200 border-emerald-400/30',
 }
 
 const ScoreBar = ({ value, color = 'bg-primary-500' }) => (
@@ -142,7 +139,7 @@ export default function CandidatesPage() {
       </div>
 
       {/* Status Pipeline summary */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {STATUSES.map(s => {
           const count = candidates.filter(c => c.status === s).length
           return (

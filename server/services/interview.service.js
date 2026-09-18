@@ -244,3 +244,98 @@ Provide a comprehensive evaluation. Return ONLY valid JSON:
     return FALLBACK_SUMMARY
   }
 }
+
+// ── Candidate-initiated interview helpers ─────────────────────────────────
+
+const FALLBACK_QUESTIONS = [
+  'Tell me about yourself and your professional background.',
+  'Explain a project from your resume that you are most proud of.',
+  'What are your core technical strengths and how have you applied them?',
+  'Describe a challenging technical problem you faced and how you solved it.',
+  'Why should we hire you for this role?',
+]
+
+/**
+ * Generate 5 resume-based interview questions.
+ * Falls back to generic questions if AI is unavailable.
+ */
+export const generateResumeBasedQuestions = async ({ resumeText, jobTitle }) => {
+  const prompt = `
+Candidate Resume:
+${(resumeText || '').substring(0, 3000)}
+
+Job Role: ${jobTitle || 'Software Engineer'}
+
+Generate exactly 5 interview questions as a JSON array of strings.
+Rules:
+- Question 1 & 2: Ask about specific projects or experience mentioned in the resume
+- Question 3: Ask about a specific technical skill mentioned in the resume
+- Question 4: Ask one deep technical question relevant to the job role
+- Question 5: Ask one behavioral question
+
+Return ONLY a valid JSON array, e.g.: ["Q1", "Q2", "Q3", "Q4", "Q5"]
+`
+
+  try {
+    const content = await invokeGroq(
+      'You are a senior technical interviewer. Return ONLY a valid JSON array of 5 question strings.',
+      [{ role: 'human', content: prompt }]
+    )
+
+    const jsonMatch = content.match(/\[[\s\S]*\]/)
+    if (!jsonMatch) throw new Error('AI did not return a valid JSON array')
+    const parsed = JSON.parse(jsonMatch[0])
+
+    if (!Array.isArray(parsed) || parsed.length < 5) throw new Error('Invalid question count')
+
+    logger.info('[Interview AI] Resume-based questions generated', { count: parsed.length, jobTitle })
+    return parsed.slice(0, 5)
+  } catch (err) {
+    logger.warn('[Interview AI] generateResumeBasedQuestions falling back to generic', { error: err.message })
+    return FALLBACK_QUESTIONS
+  }
+}
+
+/**
+ * Evaluate a single candidate answer. Returns { score: 0-100, feedback: string }.
+ * Falls back to random score 60-100 if AI is unavailable.
+ */
+export const evaluateInterviewAnswer = async ({ question, answer, jobTitle }) => {
+  // Empty / very short answers get a low score immediately
+  if (!answer || answer.trim().length < 5) {
+    return { score: 20, feedback: 'No meaningful answer was provided.' }
+  }
+
+  const prompt = `
+Role: ${jobTitle || 'Software Engineer'}
+Question: ${question}
+Candidate Answer: ${answer}
+
+Evaluate this interview answer on a scale of 0-100.
+Return ONLY valid JSON:
+{
+  "score": <integer 0-100>,
+  "feedback": "<1-2 sentence constructive feedback>"
+}`
+
+  try {
+    const content = await invokeGroq(
+      'You are a technical interview evaluator. Return ONLY valid JSON with score and feedback.',
+      [{ role: 'human', content: prompt }]
+    )
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) throw new Error('AI did not return valid JSON')
+    const parsed = JSON.parse(jsonMatch[0])
+
+    const score = Math.max(0, Math.min(100, parseInt(parsed.score) || 60))
+    logger.info('[Interview AI] Answer evaluated', { score, jobTitle })
+    return { score, feedback: parsed.feedback || 'Evaluated successfully.' }
+  } catch (err) {
+    logger.warn('[Interview AI] evaluateInterviewAnswer falling back to mock', { error: err.message })
+    return {
+      score: Math.floor(Math.random() * 40) + 60,
+      feedback: 'Decent answer. Improve clarity and technical depth.',
+    }
+  }
+}

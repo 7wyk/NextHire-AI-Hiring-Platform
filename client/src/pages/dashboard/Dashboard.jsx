@@ -83,14 +83,29 @@ function CandidateDashboard({ user }) {
         </Link>
       </div>
 
-      {/* Secondary action — coding sandbox (neutral tool) */}
-      <div className="grid grid-cols-1 gap-3">
+      {/* Secondary actions */}
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Link to="/ai-interview"
+          className="card group flex items-center gap-3 bg-gradient-to-br from-indigo-600 to-blue-700 border-0 hover:scale-[1.02] transition-transform duration-200">
+          <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
+            <MessageSquare className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <p className="text-white font-semibold text-sm">AI Interview</p>
+            <p className="text-white/60 text-xs">Voice-powered mock interview</p>
+          </div>
+          <ArrowRight size={15} className="text-white/60 ml-auto group-hover:translate-x-1 transition-transform" />
+        </Link>
+
         <Link to="/coding"
           className="card group flex items-center gap-3 bg-gradient-to-br from-purple-600 to-pink-700 border-0 hover:scale-[1.02] transition-transform duration-200">
           <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
             <Code2 className="w-5 h-5 text-white" />
           </div>
-          <span className="text-white font-semibold text-sm">Coding Sandbox</span>
+          <div>
+            <p className="text-white font-semibold text-sm">Coding Sandbox</p>
+            <p className="text-white/60 text-xs">Practice coding problems</p>
+          </div>
           <ArrowRight size={15} className="text-white/60 ml-auto group-hover:translate-x-1 transition-transform" />
         </Link>
       </div>
@@ -103,69 +118,60 @@ function CandidateDashboard({ user }) {
 
 function RecruiterDashboard() {
   const [stats, setStats] = useState({
-    jobs: 0, candidates: 0, screened: 0, shortlisted: 0,
-    pipeline: { applied: 0, screening: 0, interview: 0, shortlisted: 0, hired: 0, rejected: 0 }
+    applications: 0, candidates: 0, interviews: 0, resumesScreened: 0, jobs: 0,
+    pipeline: { applied: 0, screening: 0, interview: 0, shortlisted: 0, hired: 0, rejected: 0 },
   })
-  const [recentCandidates, setRecentCandidates] = useState([])
+  const [recentApplications, setRecentApplications] = useState([])
   const [recentJobs, setRecentJobs] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const fetchAll = async () => {
+    const fetchDashboard = async () => {
       try {
-        const [candidatesRes, jobsRes] = await Promise.all([
-          api.get('/candidates?limit=50&sort=-createdAt'),
-          api.get('/jobs?limit=5&sort=-createdAt'),
-        ])
+        const { data } = await api.get('/dashboard')
+        console.log('[Dashboard] Stats received:', data)
 
-        const all = candidatesRes.data.candidates
-        const pipeline = {
-          applied:     all.filter(c => c.status === 'applied').length,
-          screening:   all.filter(c => c.status === 'screening').length,
-          interview:   all.filter(c => c.status === 'interview').length,
-          shortlisted: all.filter(c => c.status === 'shortlisted').length,
-          hired:       all.filter(c => c.status === 'hired').length,
-          rejected:    all.filter(c => c.status === 'rejected').length,
-        }
         setStats({
-          jobs:        jobsRes.data.total || 0,
-          candidates:  candidatesRes.data.total || 0,
-          screened:    all.filter(c => c.resumeScore > 0).length,
-          shortlisted: pipeline.shortlisted + pipeline.hired,
-          pipeline,
+          applications:    data.applications    ?? 0,
+          candidates:      data.candidates      ?? 0,
+          interviews:      data.interviews      ?? 0,
+          resumesScreened: data.resumesScreened  ?? 0,
+          jobs:            data.jobs             ?? 0,
+          pipeline: {
+            applied:     data.pipeline?.applied     ?? 0,
+            screening:   data.pipeline?.screening   ?? 0,
+            interview:   data.pipeline?.interview   ?? 0,
+            shortlisted: data.pipeline?.shortlisted ?? 0,
+            hired:       data.pipeline?.hired       ?? 0,
+            rejected:    data.pipeline?.rejected    ?? 0,
+          },
         })
-        setRecentCandidates(all.slice(0, 6))
-        setRecentJobs(jobsRes.data.jobs)
-      } catch { /* graceful degradation */ }
-      finally { setLoading(false) }
+        setRecentApplications(data.recentApplications || [])
+        setRecentJobs(data.recentJobs || [])
+      } catch (err) {
+        console.error('[Dashboard] Failed to fetch stats:', err)
+      } finally {
+        setLoading(false)
+      }
     }
-    fetchAll()
+    fetchDashboard()
   }, [])
 
   const statCards = [
-    { icon: Briefcase, label: 'Active Jobs',      value: stats.jobs,        change: 'Live postings',  color: 'text-blue-400',    bg: 'bg-blue-500/10',    delay: 0 },
-    { icon: Users,     label: 'Total Candidates', value: stats.candidates,  change: 'All time',       color: 'text-purple-400',  bg: 'bg-purple-500/10',  delay: 0.08 },
-    { icon: FileText,  label: 'Resumes Screened', value: stats.screened,    change: 'By Groq AI',     color: 'text-emerald-400', bg: 'bg-emerald-500/10', delay: 0.16 },
-    { icon: Trophy,    label: 'Shortlisted',      value: stats.shortlisted, change: 'Ready to hire',  color: 'text-amber-400',   bg: 'bg-amber-500/10',   delay: 0.24 },
+    { icon: Briefcase,       label: 'Active Jobs',       value: stats.jobs,            change: 'Live postings',    color: 'text-blue-400',    bg: 'bg-blue-500/10',    delay: 0 },
+    { icon: Users,           label: 'Applications',      value: stats.applications,    change: `${stats.candidates} unique`,  color: 'text-purple-400',  bg: 'bg-purple-500/10',  delay: 0.08 },
+    { icon: FileText,        label: 'Resumes Screened',  value: stats.resumesScreened, change: 'AI screened',      color: 'text-emerald-400', bg: 'bg-emerald-500/10', delay: 0.16 },
+    { icon: MessageSquare,   label: 'Interviews Done',   value: stats.interviews,      change: 'Completed',        color: 'text-amber-400',   bg: 'bg-amber-500/10',   delay: 0.24 },
   ]
 
   const pipelineConfig = [
-    { label: 'Applied',     key: 'applied',     color: 'bg-slate-500' },
-    { label: 'Screening',   key: 'screening',   color: 'bg-amber-500' },
-    { label: 'Interview',   key: 'interview',   color: 'bg-primary-500' },
-    { label: 'Shortlisted', key: 'shortlisted', color: 'bg-emerald-500' },
-    { label: 'Hired',       key: 'hired',       color: 'bg-teal-400' },
+    { label: 'Applied',      key: 'applied',     color: 'bg-slate-500' },
+    { label: 'Screening',    key: 'screening',   color: 'bg-amber-500' },
+    { label: 'Interview',    key: 'interview',   color: 'bg-primary-500' },
+    { label: 'Shortlisted',  key: 'shortlisted', color: 'bg-emerald-500' },
+    { label: 'Hired',        key: 'hired',       color: 'bg-teal-400' },
   ]
   const totalPipeline = Object.values(stats.pipeline).reduce((a, b) => a + b, 0)
-
-  const statusBadge = {
-    applied:     'badge',
-    screening:   'badge-warning',
-    interview:   'badge-primary',
-    shortlisted: 'badge-success',
-    hired:       'badge bg-teal-400/15 text-teal-200 border-teal-400/30',
-    rejected:    'badge-danger',
-  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -178,7 +184,7 @@ function RecruiterDashboard() {
         {/* Pipeline */}
         <div className="card lg:col-span-1">
           <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-            <BarChart3 size={16} className="text-primary-400" /> Hiring Pipeline
+            <BarChart3 size={16} className="text-primary-400" /> Application Pipeline
           </h3>
           <div className="space-y-3">
             {pipelineConfig.map(p => (
@@ -192,16 +198,16 @@ function RecruiterDashboard() {
           </div>
           <div className="mt-4 pt-4 border-t border-white/[0.07]">
             <p className="text-slate-500 text-xs">
-              {stats.pipeline.rejected} rejected · {totalPipeline} total
+              {stats.pipeline.rejected > 0 && `${stats.pipeline.rejected} rejected · `}{totalPipeline} total applications
             </p>
           </div>
         </div>
 
-        {/* Recent Candidates */}
+        {/* Recent Applications */}
         <div className="card lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-white flex items-center gap-2">
-              <Clock size={16} className="text-primary-400" /> Recent Candidates
+              <Clock size={16} className="text-primary-400" /> Recent Applications
             </h3>
             <Link to="/candidates" className="btn-ghost text-xs gap-1">
               View all <ArrowRight size={12} />
@@ -211,33 +217,34 @@ function RecruiterDashboard() {
             <div className="space-y-3">
               {[...Array(4)].map((_, i) => <div key={i} className="h-12 bg-surface-700 rounded-xl animate-pulse" />)}
             </div>
-          ) : recentCandidates.length === 0 ? (
+          ) : recentApplications.length === 0 ? (
             <div className="text-center py-8 text-slate-400 text-sm">
-              No candidates yet. <Link to="/resume-ai" className="text-primary-400">Screen resumes</Link> to get started.
+              No applications yet. <Link to="/jobs" className="text-primary-400">Create a job</Link> to get started.
             </div>
           ) : (
             <div className="space-y-2">
-              {recentCandidates.map((c, i) => (
-                <motion.div key={c._id}
+              {recentApplications.map((app, i) => (
+                <motion.div key={app._id}
                   initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: i * 0.05 }}
                   className="flex items-center justify-between py-2 border-b border-white/[0.05] last:border-0"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500/30 to-accent-500/30 border border-primary-500/20 flex items-center justify-center text-primary-300 font-semibold text-xs flex-shrink-0">
-                      {c.name[0]}
+                      {(app.candidate?.name || '?')[0]}
                     </div>
                     <div>
-                      <p className="text-white text-sm font-medium">{c.name}</p>
-                      <p className="text-slate-500 text-xs">{c.currentRole || c.email}</p>
+                      <p className="text-white text-sm font-medium">{app.candidate?.name || 'Candidate'}</p>
+                      <p className="text-slate-500 text-xs">{app.job?.title || 'Position'}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="text-right hidden sm:block">
-                      <p className="text-white text-sm font-bold">{c.totalScore}<span className="text-slate-500 font-normal text-xs">/100</span></p>
-                    </div>
-                    <span className={`${statusBadge[c.status] || 'badge'} badge capitalize text-xs`}>{c.status}</span>
-                  </div>
+                  <span className={`badge capitalize text-xs ${
+                    app.status === 'interview' ? 'badge-primary' :
+                    app.status === 'screening' ? 'badge-warning' :
+                    'bg-slate-500/15 text-slate-300 border-slate-500/25'
+                  }`}>
+                    {app.status}
+                  </span>
                 </motion.div>
               ))}
             </div>
@@ -246,11 +253,10 @@ function RecruiterDashboard() {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {[
           { icon: Zap,    label: 'Screen Resume', link: '/resume-ai',          cls: 'from-primary-600 to-indigo-700' },
           { icon: Wand2,  label: 'Create Test',   link: '/create-coding-test', cls: 'from-purple-600 to-pink-700'   },
-          { icon: MessageSquare, label: 'AI Interview', link: '/interview',    cls: 'from-emerald-600 to-teal-700'  },
           { icon: Trophy, label: 'Rankings',      link: '/ranking',            cls: 'from-amber-600 to-orange-700'  },
         ].map(a => (
           <Link key={a.label} to={a.link}
@@ -286,7 +292,7 @@ function RecruiterDashboard() {
                 </div>
                 <p className="text-slate-400 text-xs mb-2">{j.company}</p>
                 <div className="flex items-center gap-2 text-slate-500 text-xs">
-                  <Users size={11} /> {j.applicantCount} applicants
+                  <Users size={11} /> {j.applicantCount || 0} applicants
                 </div>
               </div>
             ))}

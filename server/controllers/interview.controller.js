@@ -9,6 +9,11 @@ import {
   evaluateAnswer, generateInterviewSummary
 } from '../services/interview.service.js'
 
+// v2 Agent System
+import { supervisorAgent } from '../agents/supervisor.agent.js'
+import { storeInterviewSession } from '../memory/interview.memory.js'
+import { storeInterviewResult } from '../memory/candidate.memory.js'
+
 // POST /api/interview/sessions
 export const createSession = async (req, res) => {
   try {
@@ -58,12 +63,19 @@ export const createSession = async (req, res) => {
       textLength:      resumeText.length,
     })
 
-    // Generate opening question from AI
-    const opening = await startInterview({
-      jobTitle: job.title,
-      resumeText,
-      resumeSkills,
-    })
+    // Generate opening question via Agent System (falls back to direct call)
+    let opening
+    try {
+      const agentResult = await supervisorAgent.process({
+        type: 'start-interview',
+        jobTitle: job.title,
+        resumeText,
+        resumeSkills,
+      })
+      opening = agentResult.success ? agentResult.data : await startInterview({ jobTitle: job.title, resumeText, resumeSkills })
+    } catch {
+      opening = await startInterview({ jobTitle: job.title, resumeText, resumeSkills })
+    }
 
     const session = await InterviewSession.create({
       candidate: candidate._id,
@@ -138,11 +150,20 @@ export const sendMessage = async (req, res) => {
         .filter(m => m.role === 'interviewer')
         .slice(-1)[0]?.content || ''
 
-      evaluation = await evaluateAnswer({
-        question: lastQuestion,
-        answer: content,
-        jobTitle: session.job?.title || session.jobTitle,
-      })
+      // Evaluate via Agent System (falls back to direct call)
+      let evalResult
+      try {
+        const agentResult = await supervisorAgent.process({
+          type: 'evaluate-answer',
+          question: lastQuestion,
+          answer: content,
+          jobTitle: session.job?.title || session.jobTitle,
+        })
+        evalResult = agentResult.success ? agentResult.data : await evaluateAnswer({ question: lastQuestion, answer: content, jobTitle: session.job?.title || session.jobTitle })
+      } catch {
+        evalResult = await evaluateAnswer({ question: lastQuestion, answer: content, jobTitle: session.job?.title || session.jobTitle })
+      }
+      evaluation = evalResult
 
       // Attach score/feedback to the candidate message
       const lastIdx = session.messages.length - 1
@@ -204,6 +225,9 @@ export const sendMessage = async (req, res) => {
           else if (summary.recommendation === 'reject') candidateDoc.status = 'rejected'
           await candidateDoc.save()
         }
+        // Store in AI memory (non-blocking)
+        storeInterviewSession(session._id, candidateUserId, jobId, summary).catch(() => {})
+        storeInterviewResult(candidateUserId, jobId, summary).catch(() => {})
       } catch (e) {
         logger.error('[Interview summary]', { error: e.message })
       }
@@ -223,6 +247,33 @@ export const sendMessage = async (req, res) => {
   }
 }
 
+// ── Helper: strip scores from session for candidate users ──────────────────
+const stripScoresForCandidate = (session, userRole) => {
+  if (userRole === 'recruiter' || userRole === 'admin') return session
+  const obj = session.toObject ? session.toObject() : { ...session }
+  delete obj.scores
+  delete obj.finalScore
+  delete obj.summary
+  delete obj.strengths
+  delete obj.concerns
+  delete obj.recommendation
+  if (obj.answers) {
+    obj.answers = obj.answers.map(a => ({
+      question: a.question,
+      answerText: a.answerText,
+      // score and feedback intentionally omitted
+    }))
+  }
+  // Strip score/feedback from messages too
+  if (obj.messages) {
+    obj.messages = obj.messages.map(m => {
+      const { score, feedback, ...rest } = m
+      return rest
+    })
+  }
+  return obj
+}
+
 // GET /api/interview/sessions
 export const getSessions = async (req, res) => {
   try {
@@ -231,7 +282,8 @@ export const getSessions = async (req, res) => {
       .populate('job', 'title company')
       .sort('-createdAt')
       .limit(50)
-    res.json({ sessions })
+    const cleaned = sessions.map(s => stripScoresForCandidate(s, req.user.role))
+    res.json({ sessions: cleaned })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
@@ -244,7 +296,7 @@ export const getSession = async (req, res) => {
       .populate('candidate', 'name email')
       .populate('job', 'title company')
     if (!session) return res.status(404).json({ message: 'Session not found' })
-    res.json({ session })
+    res.json({ session: stripScoresForCandidate(session, req.user.role) })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

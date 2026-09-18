@@ -18,6 +18,11 @@ import Candidate   from '../models/Candidate.js'
 import { getRankings } from '../services/ranking.service.js'
 import logger from '../config/logger.js'
 
+// v2 Agent System
+import { supervisorAgent } from '../agents/supervisor.agent.js'
+import { storeHiringDecision } from '../memory/recruiter.memory.js'
+import { getCandidateHistory } from '../memory/candidate.memory.js'
+
 const ObjectId = mongoose.Types.ObjectId
 
 // ─── GET /api/candidates ─────────────────────────────────────────────────────
@@ -300,6 +305,12 @@ export const getCandidate = async (req, res) => {
     const interviewScore = profile?.interviewScore || 0
     const totalScore     = Math.round(resumeScore * 0.3 + codeScore * 0.4 + interviewScore * 0.3)
 
+    // Enrich with AI evaluation history (v2 memory)
+    let aiHistory = []
+    try {
+      aiHistory = await getCandidateHistory(candidateUserId)
+    } catch { /* non-blocking */ }
+
     res.json({
       candidate: {
         _id:               candidateUserId,
@@ -320,6 +331,7 @@ export const getCandidate = async (req, res) => {
         weaknesses:        profile?.weaknesses || [],
         skills:            profile?.skills || [],
         appliedAt:         applications[0]?.createdAt,
+        aiHistory:         aiHistory.slice(0, 10),
       },
     })
   } catch (err) {
@@ -359,6 +371,13 @@ export const updateStatus = async (req, res) => {
       { createdBy: candidateUserId },
       { status },
     )
+
+    // v2: Store hiring decision in recruiter memory (non-blocking)
+    storeHiringDecision(recruiterId, candidateUserId, jobId || jobIds[0], {
+      status,
+      candidateName: user?.name || '',
+      jobTitle: app.job?.title || '',
+    }).catch(() => {})
 
     // Build response in the same shape as getCandidates rows
     const User = mongoose.model('User')
@@ -435,8 +454,23 @@ export const getCandidateRankings = async (req, res) => {
     const { jobId, limit = 50 } = req.query
     if (!jobId) return res.status(400).json({ message: 'jobId is required' })
 
-    const rankings = await getRankings(jobId, req.user._id, Number(limit))
-    res.json({ rankings, total: rankings.length })
+    // v2: Route through ranking agent (falls back to direct service)
+    let rankings
+    try {
+      const agentResult = await supervisorAgent.process({
+        type: 'rank-candidates',
+        jobId,
+        recruiterId: req.user._id,
+        limit: Number(limit),
+      })
+      rankings = agentResult.success && agentResult.data?.rankings
+        ? agentResult.data.rankings
+        : await getRankings(jobId, req.user._id, Number(limit))
+    } catch {
+      rankings = await getRankings(jobId, req.user._id, Number(limit))
+    }
+
+    res.json({ rankings, total: rankings.length, _agent: 'RankingAgent' })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

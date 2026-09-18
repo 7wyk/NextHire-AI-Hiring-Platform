@@ -10,10 +10,10 @@ const pageTitles = {
   '/candidates':       'Candidates',
   '/resume-ai':        'Resume AI Screening',
   '/coding':           'Coding Assessment',
-  '/interview':        'AI Interview',
   '/ranking':          'Candidate Rankings',
   '/my-applications':  'My Applications',
   '/public-jobs':      'Browse Jobs',
+  '/ai-interview':     'AI Interview',
 }
 
 export default function Navbar() {

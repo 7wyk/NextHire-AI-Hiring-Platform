@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   ClipboardList, Briefcase, MapPin, Clock,
   AlertCircle, CheckCircle2, XCircle, Loader2,
-  Trash2, ChevronDown, Code2, ArrowRight, FileText, ExternalLink
+  Trash2, ChevronDown, Code2, ArrowRight, FileText, ExternalLink, Mic
 } from 'lucide-react'
 import api from '../../services/api'
 import toast from 'react-hot-toast'
@@ -30,6 +30,8 @@ export default function MyApplicationsPage() {
   const [withdrawing, setWithdrawing]   = useState(null)
   // Set of jobIds that have a coding test available
   const [testJobIds, setTestJobIds]     = useState(new Set())
+  // Set of jobIds that have a completed AI interview
+  const [interviewStatuses, setInterviewStatuses] = useState({})
 
   const fetchApplications = async () => {
     setLoading(true)
@@ -52,6 +54,18 @@ export default function MyApplicationsPage() {
         .filter(r => r.status === 'fulfilled' && r.value !== null)
         .map(r => r.value)
       setTestJobIds(new Set(idsWithTests))
+
+      // Check AI interview status for each job
+      const ivStatuses = {}
+      await Promise.allSettled(
+        jobIds.map(async id => {
+          try {
+            const { data: s } = await api.get(`/interview/candidate/status/${id}`)
+            ivStatuses[id] = s
+          } catch { /* ignore */ }
+        })
+      )
+      setInterviewStatuses(ivStatuses)
     } catch {
       toast.error('Failed to load applications')
     } finally {
@@ -216,6 +230,35 @@ export default function MyApplicationsPage() {
                     >
                       <Code2 size={13} /> Take Test <ArrowRight size={12} />
                     </button>
+                  </motion.div>
+                )}
+
+                {/* AI Interview CTA */}
+                {jobId && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-2 text-primary-300 text-xs">
+                      <Mic size={13} className="flex-shrink-0 text-primary-400" />
+                      <span>
+                        {interviewStatuses[jobId]?.completed
+                          ? 'AI Interview completed ✓'
+                          : 'AI Interview available for this position'}
+                      </span>
+                    </div>
+                    {!interviewStatuses[jobId]?.completed && (
+                      <button
+                        id={`take-interview-${jobId}`}
+                        onClick={() => navigate(`/ai-interview?jobId=${jobId}`)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold
+                          bg-gradient-to-r from-primary-600 to-blue-600 text-white
+                          hover:opacity-90 transition-all shadow-md shadow-primary-900/30 flex-shrink-0"
+                      >
+                        <Mic size={13} /> Take Interview <ArrowRight size={12} />
+                      </button>
+                    )}
                   </motion.div>
                 )}
               </motion.div>

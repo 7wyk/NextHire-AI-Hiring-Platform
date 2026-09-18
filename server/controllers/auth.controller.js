@@ -35,9 +35,8 @@ export const register = async (req, res) => {
     if (!name || !email || !password)
       return res.status(400).json({ message: 'Name, email and password are required' })
 
-    // Prevent self-assigning admin role via API
-    const allowedRoles = ['recruiter', 'candidate']
-    const safeRole = allowedRoles.includes(role) ? role : 'candidate'
+    // Prevent self-assigning admin role via API — legacy register ignores role from body
+    const safeRole = 'candidate' // default for generic /register
 
     const exists = await User.findOne({ email })
     if (exists) return res.status(409).json({ message: 'Email already registered' })
@@ -114,6 +113,174 @@ export const login = async (req, res) => {
     })
   } catch (err) {
     logger.error('[Auth] Login failed', { error: err.message })
+    res.status(500).json({ message: err.message })
+  }
+}
+
+// ── Role-specific registration ─────────────────────────────────────────────
+
+// POST /api/auth/candidate/register
+export const candidateRegister = async (req, res) => {
+  try {
+    const { name, email, password } = req.body
+
+    if (!name || !email || !password)
+      return res.status(400).json({ message: 'Name, email and password are required' })
+
+    const exists = await User.findOne({ email })
+    if (exists) return res.status(409).json({ message: 'Email already registered' })
+
+    const user = await User.create({ name, email, password, role: 'candidate' })
+
+    const accessToken  = generateAccessToken(user)
+    const refreshToken = generateRefreshToken(user)
+
+    user.refreshToken = hashToken(refreshToken)
+    user.lastLogin    = new Date()
+    await user.save({ validateBeforeSave: false })
+
+    logger.info('[Auth] Candidate registered', { userId: user._id })
+
+    res.status(201).json({
+      accessToken,
+      refreshToken,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    })
+  } catch (err) {
+    logger.error('[Auth] candidateRegister failed', { error: err.message })
+    res.status(500).json({ message: err.message })
+  }
+}
+
+// POST /api/auth/recruiter/register
+export const recruiterRegister = async (req, res) => {
+  try {
+    const { name, email, password, company } = req.body
+
+    if (!name || !email || !password)
+      return res.status(400).json({ message: 'Name, email and password are required' })
+
+    const exists = await User.findOne({ email })
+    if (exists) return res.status(409).json({ message: 'Email already registered' })
+
+    const user = await User.create({ name, email, password, role: 'recruiter', company })
+
+    const accessToken  = generateAccessToken(user)
+    const refreshToken = generateRefreshToken(user)
+
+    user.refreshToken = hashToken(refreshToken)
+    user.lastLogin    = new Date()
+    await user.save({ validateBeforeSave: false })
+
+    logger.info('[Auth] Recruiter registered', { userId: user._id })
+
+    res.status(201).json({
+      accessToken,
+      refreshToken,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, company: user.company },
+    })
+  } catch (err) {
+    logger.error('[Auth] recruiterRegister failed', { error: err.message })
+    res.status(500).json({ message: err.message })
+  }
+}
+
+// ── Role-specific login ────────────────────────────────────────────────────
+
+// POST /api/auth/candidate/login
+export const candidateLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body
+    if (!email || !password)
+      return res.status(400).json({ message: 'Email and password are required' })
+
+    const user = await User.findOne({ email, role: 'candidate' })
+      .select('+password +refreshToken +loginAttempts +lockUntil')
+    if (!user) return res.status(401).json({ message: 'Candidate account not found. Check your email or sign up.' })
+
+    if (user.isLocked) {
+      const remaining = Math.ceil((user.lockUntil - Date.now()) / 60000)
+      return res.status(423).json({ message: `Account locked. Try again in ${remaining} minutes.` })
+    }
+    if (!user.isActive) return res.status(403).json({ message: 'Account deactivated. Contact admin.' })
+
+    const passwordMatch = await user.comparePassword(password)
+    if (!passwordMatch) {
+      user.loginAttempts += 1
+      if (user.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
+        user.lockUntil = new Date(Date.now() + LOCK_DURATION_MS)
+      }
+      await user.save({ validateBeforeSave: false })
+      return res.status(401).json({ message: 'Invalid email or password' })
+    }
+
+    user.loginAttempts = 0
+    user.lockUntil     = undefined
+    user.lastLogin     = new Date()
+
+    const accessToken  = generateAccessToken(user)
+    const refreshToken = generateRefreshToken(user)
+    user.refreshToken = hashToken(refreshToken)
+    await user.save({ validateBeforeSave: false })
+
+    logger.info('[Auth] Candidate logged in', { userId: user._id })
+
+    res.json({
+      accessToken,
+      refreshToken,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    })
+  } catch (err) {
+    logger.error('[Auth] candidateLogin failed', { error: err.message })
+    res.status(500).json({ message: err.message })
+  }
+}
+
+// POST /api/auth/recruiter/login
+export const recruiterLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body
+    if (!email || !password)
+      return res.status(400).json({ message: 'Email and password are required' })
+
+    const user = await User.findOne({ email, role: 'recruiter' })
+      .select('+password +refreshToken +loginAttempts +lockUntil')
+    if (!user) return res.status(401).json({ message: 'Recruiter account not found. Check your email or sign up.' })
+
+    if (user.isLocked) {
+      const remaining = Math.ceil((user.lockUntil - Date.now()) / 60000)
+      return res.status(423).json({ message: `Account locked. Try again in ${remaining} minutes.` })
+    }
+    if (!user.isActive) return res.status(403).json({ message: 'Account deactivated. Contact admin.' })
+
+    const passwordMatch = await user.comparePassword(password)
+    if (!passwordMatch) {
+      user.loginAttempts += 1
+      if (user.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
+        user.lockUntil = new Date(Date.now() + LOCK_DURATION_MS)
+      }
+      await user.save({ validateBeforeSave: false })
+      return res.status(401).json({ message: 'Invalid email or password' })
+    }
+
+    user.loginAttempts = 0
+    user.lockUntil     = undefined
+    user.lastLogin     = new Date()
+
+    const accessToken  = generateAccessToken(user)
+    const refreshToken = generateRefreshToken(user)
+    user.refreshToken = hashToken(refreshToken)
+    await user.save({ validateBeforeSave: false })
+
+    logger.info('[Auth] Recruiter logged in', { userId: user._id })
+
+    res.json({
+      accessToken,
+      refreshToken,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, company: user.company },
+    })
+  } catch (err) {
+    logger.error('[Auth] recruiterLogin failed', { error: err.message })
     res.status(500).json({ message: err.message })
   }
 }

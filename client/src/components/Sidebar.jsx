@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import {
   LayoutDashboard, Users, Briefcase, FileText,
   Code2, MessageSquare, Trophy, LogOut, Zap,
-  ClipboardList, Search, Wand2
+  ClipboardList, Search, Wand2, Brain
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 
@@ -15,14 +15,15 @@ const recruiterNav = [
   { icon: Users,           label: 'Candidates',       path: '/candidates' },
   { icon: FileText,        label: 'Resume AI',        path: '/resume-ai' },
   { icon: Wand2,           label: 'Create Test',      path: '/create-coding-test' },
-  { icon: MessageSquare,   label: 'AI Interview',     path: '/interview' },
   { icon: Trophy,          label: 'Rankings',         path: '/ranking' },
+  { icon: Brain,           label: 'Agent Monitor',    path: '/agent-monitor' },
 ]
 
 const candidateNav = [
   { icon: LayoutDashboard, label: 'Dashboard',        path: '/dashboard' },
   { icon: Search,          label: 'Browse Jobs',      path: '/public-jobs' },
   { icon: ClipboardList,   label: 'My Applications',  path: '/my-applications' },
+  { icon: MessageSquare,   label: 'AI Interview',     path: '/ai-interview' },
   { icon: Code2,           label: 'Coding Sandbox',   path: '/coding' },
 ]
 

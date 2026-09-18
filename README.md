@@ -1,8 +1,9 @@
-# NextHire AI 🚀
+# NextHire AI v2 🚀
 
-> **Production-grade AI Hiring Platform** — Resume Screening · Coding IDE · AI Interviews · Candidate Ranking · Recruiter Dashboard
+> **Autonomous Multi-Agent AI Recruitment Platform**
+> Resume Screening · Coding IDE · AI Interviews · Candidate Ranking · Agent Dashboard
 
-Built with **100% free-tier** services: Groq LLM, Pinecone, MongoDB Atlas, Judge0, Render & Vercel.
+Built with **Multi-Agent Architecture + MCP + Vectorless AI + Persistent Memory**
 
 ---
 
@@ -10,23 +11,60 @@ Built with **100% free-tier** services: Groq LLM, Pinecone, MongoDB Atlas, Judge
 
 | Module | Description |
 |---|---|
-| 🧠 **Resume AI** | Upload PDF/DOC → Groq LLM screens & scores → Pinecone vector matching |
+| 🧠 **Resume AI** | Upload PDF/DOC → Agent-powered LLM screening & scoring |
 | 💻 **Coding IDE** | Monaco Editor + Judge0 execution in 13+ languages + AI code review |
 | 🎙️ **AI Interview** | "Alex" AI interviewer generates adaptive questions, evaluates answers |
-| 🏆 **Ranking Engine** | Composite score: Resume 40% + Code 30% + Interview 30% |
+| 🏆 **Ranking Engine** | Composite score: Resume 30% + Code 40% + Interview 30% |
 | 📊 **Dashboard** | Live pipeline analytics, recent activity, quick actions |
+| 🤖 **Agent Monitor** | Real-time dashboard showing all AI agent states, MCP tools, metrics |
+| 💬 **AI Assistant** | Natural language recruiter assistant — "Find best candidates", "Generate test" |
+| 🧬 **AI Memory** | Persistent evaluation history across sessions |
+| 🔍 **Vectorless Search** | MongoDB-native candidate matching (no Pinecone required) |
 
 ---
 
-## 🏗️ Tech Stack
+## 🏗️ Architecture (v2)
+
+```
+Request → Controller → Supervisor Agent → Specialized Agent → MCP Tool → Database/API
+                                                                   ↓
+                                                            AI Memory (MongoDB)
+```
+
+### Multi-Agent System
+| Agent | Responsibility |
+|---|---|
+| **Supervisor** | Routes tasks, coordinates workflows, handles chat |
+| **Resume** | Resume screening and analysis |
+| **Interview** | Question generation, answer evaluation |
+| **Coding** | Code evaluation, question generation |
+| **Ranking** | Candidate ranking and comparison |
+| **Notification** | Real-time Socket.IO notifications |
+
+### MCP Tool Registry
+| Tool | Operations |
+|---|---|
+| `mongodb.*` | getCandidate, getJob, getApplications, saveScore, getSubmissions, getInterviewSessions |
+| `resume.*` | extractResume, analyzeResume |
+| `judge0.*` | executeCode, getExecutionResult |
+| `cloudinary.*` | uploadResume |
+| `notification.*` | sendNotification, broadcast |
+
+---
+
+## 🛠️ Tech Stack
 
 **Frontend:** React 18 · Vite · Tailwind CSS · Framer Motion · Monaco Editor · Zustand · React Router v6
 
 **Backend:** Node.js · Express · MongoDB Atlas · Mongoose · Socket.IO · JWT · Multer
 
-**AI/ML:** Groq (Llama3-8b) · LangChain · Pinecone Vector DB · pdf-parse
+**AI/ML:** Groq (Llama3-8b) · LangChain · Vectorless Search · AI Memory System
+
+**Agent System:** Multi-Agent (Supervisor + 5 Specialists) · MCP Protocol · Persistent Memory
 
 **Code Execution:** Judge0 CE via RapidAPI
+
+**Optional:** Pinecone Vector DB (kept as fallback)
 
 ---
 
@@ -35,8 +73,8 @@ Built with **100% free-tier** services: Groq LLM, Pinecone, MongoDB Atlas, Judge
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/yourusername/nexthire-ai
-cd nexthire-ai
+git clone https://github.com/yourusername/nexthire-ai-v2
+cd nexthire-ai-v2
 npm run install:all
 ```
 
@@ -53,17 +91,15 @@ cp server/.env.example server/.env
 |---|---|---|
 | MongoDB Atlas | [cloud.mongodb.com](https://cloud.mongodb.com) | `MONGODB_URI` |
 | Groq LLM | [console.groq.com](https://console.groq.com) | `GROQ_API_KEY` |
-| Pinecone | [app.pinecone.io](https://app.pinecone.io) | `PINECONE_API_KEY` |
 | Judge0 (RapidAPI) | [rapidapi.com/judge0-official](https://rapidapi.com/judge0-official/api/judge0-ce) | `JUDGE0_API_KEY` |
+| Pinecone (optional) | [app.pinecone.io](https://app.pinecone.io) | `PINECONE_API_KEY` |
 
-### 3. Seed the Database
-
-```bash
-cd server
-node seed.js   # Adds 4 coding problems
+**v2-specific settings:**
+```env
+USE_VECTORLESS=true    # Use MongoDB-native search instead of Pinecone
 ```
 
-### 4. Run Dev Servers
+### 3. Run Dev Servers
 
 ```bash
 # From project root – runs both client and server concurrently
@@ -79,50 +115,94 @@ npm run dev
 ## 📁 Project Structure
 
 ```
-nexthire-ai/
-├── client/                      # React + Vite frontend
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── LandingPage.jsx
-│   │   │   ├── auth/            # Login, Register
-│   │   │   ├── dashboard/       # Dashboard with analytics
-│   │   │   ├── jobs/            # Job CRUD with modal
-│   │   │   ├── candidates/      # Pipeline table with scores
-│   │   │   ├── resume/          # AI resume screener
-│   │   │   ├── coding/          # Monaco IDE + Judge0
-│   │   │   ├── interview/       # AI chat interview
-│   │   │   └── ranking/         # Podium + sortable table
-│   │   ├── components/          # Sidebar, Navbar
-│   │   ├── layouts/             # MainLayout, AuthLayout
-│   │   ├── services/api.js      # Axios + JWT interceptor
-│   │   └── store/authStore.js   # Zustand auth store
-│   ├── tailwind.config.js
-│   └── vite.config.js
+nexthire-ai-v2/
+├── client/                         # React + Vite frontend
+│   └── src/
+│       ├── pages/
+│       │   ├── agents/AgentMonitor.jsx      # ★ v2: Agent dashboard
+│       │   ├── auth/                        # Login, Register
+│       │   ├── dashboard/                   # Analytics dashboard
+│       │   ├── jobs/                        # Job management
+│       │   ├── candidates/                  # Pipeline table
+│       │   ├── resume/                      # AI resume screener
+│       │   ├── coding/                      # Monaco IDE + Judge0
+│       │   ├── interview/                   # AI chat interview
+│       │   └── ranking/                     # Candidate rankings
+│       ├── components/
+│       │   ├── RecruiterAssistant.jsx        # ★ v2: Floating AI chat
+│       │   ├── CandidateAIProfile.jsx       # ★ v2: AI insights card
+│       │   ├── Sidebar.jsx                  # Navigation (updated)
+│       │   └── Navbar.jsx
+│       └── store/
+│           ├── authStore.js
+│           └── agentStore.js                # ★ v2: Agent Zustand store
 │
-└── server/                      # Node + Express backend
-    ├── config/
-    │   ├── db.js                # MongoDB connection
-    │   └── multer.js            # File upload config
+└── server/
+    ├── agents/                              # ★ v2: Multi-Agent System
+    │   ├── base.agent.js                    # Base class
+    │   ├── supervisor.agent.js              # Central orchestrator
+    │   ├── resume.agent.js
+    │   ├── interview.agent.js
+    │   ├── coding.agent.js
+    │   ├── ranking.agent.js
+    │   └── notification.agent.js
+    ├── mcp/                                 # ★ v2: MCP Tool Layer
+    │   ├── base.mcp.js                      # MCPTool + MCPRegistry
+    │   ├── mongodb.mcp.js
+    │   ├── resume.mcp.js
+    │   ├── judge0.mcp.js
+    │   ├── cloudinary.mcp.js
+    │   └── notification.mcp.js
+    ├── memory/                              # ★ v2: AI Memory System
+    │   ├── candidate.memory.js
+    │   ├── interview.memory.js
+    │   └── recruiter.memory.js
     ├── models/
-    │   ├── User.js
-    │   ├── Job.js
-    │   ├── Candidate.js
-    │   ├── Problem.js
-    │   └── InterviewSession.js
-    ├── controllers/             # auth, job, candidate, resume, code, interview
-    ├── routes/                  # REST API routes
+    │   ├── AgentMemory.js                   # ★ v2: Memory schema
+    │   ├── User.js, Job.js, Candidate.js
+    │   ├── Application.js, Submission.js
+    │   ├── CodingTest.js, InterviewSession.js
+    │   └── Problem.js
     ├── services/
-    │   ├── ai.service.js        # Groq LLM (screen, interview, code eval)
-    │   ├── vector.service.js    # Pinecone upsert/match/delete
-    │   ├── parser.service.js    # PDF text extraction
-    │   ├── judge0.service.js    # Code execution + polling
-    │   └── interview.service.js # AI interviewer logic
-    ├── middlewares/
-    │   └── auth.middleware.js   # JWT protect + authorize
-    ├── seed.js                  # DB seeder (4 coding problems)
-    ├── render.yaml              # Render.com deployment config
-    └── index.js                 # Express + Socket.IO server
+    │   ├── vectorless.service.js             # ★ v2: MongoDB-native search
+    │   ├── ai.service.js                     # Groq LLM
+    │   ├── interview.service.js
+    │   ├── judge0.service.js
+    │   ├── ranking.service.js
+    │   ├── cloudinary.service.js
+    │   └── vector.service.js                 # Pinecone (fallback)
+    ├── controllers/                          # All refactored for agents
+    ├── routes/
+    │   ├── agent.routes.js                   # ★ v2: Agent API routes
+    │   └── (auth, job, candidate, resume, code, interview, etc.)
+    └── index.js                              # Express + MCP registration
 ```
+
+---
+
+## 🔑 API Endpoints
+
+### Original APIs (preserved)
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/auth/register` | Register user |
+| POST | `/api/auth/login` | Login |
+| GET/POST | `/api/jobs` | List / create jobs |
+| GET | `/api/candidates` | List candidates |
+| PATCH | `/api/candidates/:id/status` | Update pipeline stage |
+| POST | `/api/resume/screen` | AI resume screening |
+| POST | `/api/code/run` | Execute code (Judge0) |
+| POST | `/api/coding-test/generate` | Generate coding test |
+| POST | `/api/interview/sessions` | Start AI interview |
+
+### v2 Agent APIs (new)
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/agents/status` | All agent statuses + metrics |
+| GET | `/api/agents/tools` | List registered MCP tools |
+| POST | `/api/agents/chat` | Natural language AI assistant |
+| POST | `/api/agents/execute` | Execute a specific agent task |
+| POST | `/api/agents/search-candidates` | Vectorless candidate search |
 
 ---
 
@@ -130,8 +210,8 @@ nexthire-ai/
 
 ### Backend → Render.com
 
-1. Push the `server/` folder to a GitHub repo
-2. New Web Service in Render → connect repo
+1. Push the `server/` folder to GitHub
+2. New Web Service → connect repo
 3. Build: `npm install` · Start: `node index.js`
 4. Add environment variables from `.env.example`
 
@@ -140,29 +220,10 @@ nexthire-ai/
 ```bash
 cd client
 npm run build
-# Deploy dist/ to Vercel — or use Vercel CLI:
 npx vercel --prod
 ```
 
 Set `VITE_API_URL` = your Render backend URL in Vercel environment settings.
-
----
-
-## 🔑 API Endpoints
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/auth/register` | Register recruiter |
-| POST | `/api/auth/login` | Login |
-| GET/POST | `/api/jobs` | List / create jobs |
-| GET/POST | `/api/candidates` | List / create candidates |
-| PATCH | `/api/candidates/:id/status` | Move pipeline stage |
-| POST | `/api/resume/screen` | AI resume screening (multipart) |
-| POST | `/api/resume/match` | Vector match resumes to job |
-| POST | `/api/code/run` | Execute code (Judge0) |
-| POST | `/api/code/submit` | Submit against test cases |
-| POST | `/api/interview/sessions` | Start AI interview |
-| POST | `/api/interview/sessions/:id/message` | Send candidate reply |
 
 ---
 

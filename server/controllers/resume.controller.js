@@ -7,6 +7,11 @@ import { uploadFile } from '../services/cloudinary.service.js'
 import fs from 'fs'
 import logger from '../config/logger.js'
 
+// v2 Agent System
+import { supervisorAgent } from '../agents/supervisor.agent.js'
+import { storeResumeEvaluation } from '../memory/candidate.memory.js'
+import { searchCandidates } from '../services/vectorless.service.js'
+
 /**
  * POST /api/resume/screen
  * Upload a resume file + jobId → AI screening result.
@@ -46,9 +51,19 @@ export const screenResume = async (req, res) => {
     // 4. Clean up temp disk file
     if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath)
 
-    // 5. Groq AI screening
+    // 5. AI screening via Agent System (falls back to direct call)
     const jobDescription = `${job.title} at ${job.company}.\n${job.description}\nRequired skills: ${job.skills?.join(', ')}`
-    const aiResult = await screenResumeWithAI(resumeText, jobDescription)
+    let aiResult
+    try {
+      const agentResult = await supervisorAgent.process({
+        type: 'analyze-resume',
+        resumeText,
+        jobDescription,
+      })
+      aiResult = agentResult.success ? agentResult.data : await screenResumeWithAI(resumeText, jobDescription)
+    } catch {
+      aiResult = await screenResumeWithAI(resumeText, jobDescription)
+    }
 
     // 6. Create or update Candidate
     let candidate = await Candidate.findOne({ email: candidateEmail, job: jobId })
@@ -78,13 +93,17 @@ export const screenResume = async (req, res) => {
 
     await candidate.save()
 
-    // 7. Increment job applicant count
+    // 7. Store in AI memory (non-blocking)
+    storeResumeEvaluation(candidate._id, jobId, aiResult).catch(() => {})
+
+    // 8. Increment job applicant count
     await Job.findByIdAndUpdate(jobId, { $inc: { applicantCount: 1 } })
 
     res.status(201).json({
       candidate,
       aiResult,
       message: `Resume screened successfully. Score: ${aiResult.score}/100`,
+      _agent: 'ResumeAgent',
     })
   } catch (err) {
     if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath)
@@ -136,8 +155,18 @@ export const screenFromApplication = async (req, res) => {
     const job = application.job
     const jobDescription = `${job.title} at ${job.company}.\n${job.description}\nRequired skills: ${job.skills?.join(', ')}`
 
-    // Run AI screening
-    const aiResult = await screenResumeWithAI(application.resumeText, jobDescription)
+    // Run AI screening via Agent System (falls back to direct call)
+    let aiResult
+    try {
+      const agentResult = await supervisorAgent.process({
+        type: 'analyze-resume',
+        resumeText: application.resumeText,
+        jobDescription,
+      })
+      aiResult = agentResult.success ? agentResult.data : await screenResumeWithAI(application.resumeText, jobDescription)
+    } catch {
+      aiResult = await screenResumeWithAI(application.resumeText, jobDescription)
+    }
 
     logger.info('[Resume] Screened from application', {
       applicationId: application._id,
@@ -172,6 +201,9 @@ export const screenFromApplication = async (req, res) => {
 
     await candidate.save()
 
+    // Store in AI memory (non-blocking)
+    storeResumeEvaluation(candidate._id, application.job._id, aiResult).catch(() => {})
+
     // Update application status to 'screening'
     if (application.status === 'applied') {
       application.status = 'screening'
@@ -199,45 +231,25 @@ export const screenFromApplication = async (req, res) => {
  */
 export const matchResumes = async (req, res) => {
   try {
-    const { jobId, topK = 10 } = req.body
+    const { jobId, topK = 10, minScore, minExperience, requiredSkills } = req.body
     const job = await Job.findById(jobId)
     if (!job) return res.status(404).json({ message: 'Job not found' })
 
-    const searchTerms = [
-      job.title,
-      ...(job.skills || []),
-    ].join(' ')
+    // v2: Use vectorless service (MongoDB-native search)
+    const vectorlessResults = await searchCandidates(jobId, {
+      topK, minScore, minExperience, requiredSkills,
+    })
 
-    let candidates
-    try {
-      candidates = await Candidate.find(
-        { $text: { $search: searchTerms } },
-        { score: { $meta: 'textScore' } }
-      )
-        .sort({ score: { $meta: 'textScore' } })
-        .limit(Number(topK))
-        .populate('job', 'title')
-        .lean()
-    } catch {
-      candidates = await Candidate.find({
-        $or: [
-          { skills: { $in: job.skills || [] } },
-          { resumeText: { $regex: job.title, $options: 'i' } },
-        ]
-      })
-        .sort({ resumeScore: -1 })
-        .limit(Number(topK))
-        .populate('job', 'title')
-        .lean()
-    }
-
-    const matches = candidates.map(c => ({
-      candidateId: c._id,
+    // Format to preserve backward-compatible response shape
+    const matches = vectorlessResults.map(c => ({
+      candidateId: c.candidateId,
       score: c.resumeScore || 0,
+      relevanceScore: c.relevanceScore || 0,
+      skillMatch: c.skillMatch || 0,
       candidate: c,
     }))
 
-    res.json({ matches, count: matches.length })
+    res.json({ matches, count: matches.length, method: 'vectorless' })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

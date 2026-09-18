@@ -6,6 +6,10 @@ import { executeCode } from '../services/judge0.service.js'
 import { updateCodeScore }  from '../services/ranking.service.js'
 import vm from 'node:vm'
 
+// v2 Agent System
+import { supervisorAgent } from '../agents/supervisor.agent.js'
+import { storeCodingResult } from '../memory/candidate.memory.js'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/coding-test/generate            [recruiter only]
 // Body: { jobId, role, difficulty, numberOfQuestions }
@@ -24,7 +28,17 @@ export const generateTest = async (req, res) => {
     const job = await Job.findOne({ _id: jobId, recruiter: req.user._id })
     if (!job) return res.status(404).json({ message: 'Job not found or access denied' })
 
-    const questions = await generateCodingQuestions(role, difficulty, numberOfQuestions)
+    // v2: Route through agent system (falls back to direct call)
+    let questions
+    try {
+      const agentResult = await supervisorAgent.process({
+        type: 'generate-coding-questions',
+        role, difficulty, count: numberOfQuestions,
+      })
+      questions = agentResult.success ? agentResult.data : await generateCodingQuestions(role, difficulty, numberOfQuestions)
+    } catch {
+      questions = await generateCodingQuestions(role, difficulty, numberOfQuestions)
+    }
 
     const test = await CodingTest.findOneAndUpdate(
       { jobId },
@@ -294,16 +308,26 @@ export const submitTest = async (req, res) => {
       overallScore === 100 ? 'Accepted'    :
       overallScore >= 50   ? 'Partial'     : 'Wrong Answer'
 
-    // ── AI code quality feedback (async, best-effort) ─────────────────────
+    // ── AI code quality feedback via Agent (falls back to direct) ──────────
     let aiFeedback = null
     try {
       const primaryAnswer = answers[0]
       if (primaryAnswer?.code?.trim().length > 20) {
-        aiFeedback = await evaluateCode(
-          primaryAnswer.code,
-          test.questions[0]?.question || 'Coding assessment',
-          primaryAnswer.language || 'javascript'
-        )
+        try {
+          const agentResult = await supervisorAgent.process({
+            type: 'evaluate-code',
+            code: primaryAnswer.code,
+            question: test.questions[0]?.question || 'Coding assessment',
+            language: primaryAnswer.language || 'javascript',
+          })
+          aiFeedback = agentResult.success ? agentResult.data : await evaluateCode(
+            primaryAnswer.code, test.questions[0]?.question || 'Coding assessment', primaryAnswer.language || 'javascript'
+          )
+        } catch {
+          aiFeedback = await evaluateCode(
+            primaryAnswer.code, test.questions[0]?.question || 'Coding assessment', primaryAnswer.language || 'javascript'
+          )
+        }
       }
     } catch { /* non-blocking */ }
 
@@ -337,19 +361,25 @@ export const submitTest = async (req, res) => {
     // ── Propagate score to candidate ranking (non-blocking) ────────────────
     updateCodeScore(req.user._id, jobId, overallScore).catch(() => {})
 
-    // ── Real-time notification to recruiter (non-blocking) ─────────────────
+    // ── Store in AI memory (non-blocking) ──────────────────────────────────
+    storeCodingResult(req.user._id, jobId, {
+      passRate: overallScore, verdict,
+      language: answers[0]?.language || 'javascript',
+      aiFeedback,
+    }).catch(() => {})
+
+    // ── Real-time notification via Agent (non-blocking) ────────────────────
     try {
       const job = await Job.findById(jobId).select('recruiter title')
       if (job?.recruiter) {
-        const pushToUser = req.app.get('pushToUser')
-        pushToUser?.(String(job.recruiter), 'test-submitted', {
-          candidateId: req.user._id,
+        supervisorAgent.process({
+          type: 'test-submitted',
+          recruiterId: String(job.recruiter),
           candidateName: req.user.name,
-          jobId,
           jobTitle: job.title,
           score: overallScore,
           verdict,
-        })
+        }).catch(() => {})
       }
     } catch { /* non-blocking */ }
 

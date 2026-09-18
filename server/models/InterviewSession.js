@@ -20,7 +20,7 @@ const interviewSessionSchema = new mongoose.Schema({
   round:       { type: Number, default: 1 },
   questionCount: { type: Number, default: 0 },
 
-  // Scores per dimension
+  // Scores per dimension (recruiter-initiated flow)
   scores: {
     technical:   { type: Number, default: 0 },
     behavioral:  { type: Number, default: 0 },
@@ -28,11 +28,22 @@ const interviewSessionSchema = new mongoose.Schema({
     overall:     { type: Number, default: 0 },
   },
 
-  // Final AI summary
+  // Final AI summary (recruiter-initiated flow)
   summary:     { type: String },
   strengths:   [String],
   concerns:    [String],
   recommendation: { type: String, enum: ['hire', 'interview-next', 'reject', 'pending'], default: 'pending' },
+
+  // ── Candidate-initiated interview fields ─────────────────────────────────
+  answers: [{
+    question:   { type: String },
+    answerText: { type: String, default: '' },
+    score:      { type: Number, default: 0 },
+    feedback:   { type: String, default: '' },
+  }],
+  finalScore:  { type: Number, default: 0 },
+  completed:   { type: Boolean, default: false },
+  initiatedBy: { type: String, enum: ['recruiter', 'candidate'], default: 'recruiter' },
 
   startedAt:   { type: Date },
   completedAt: { type: Date },

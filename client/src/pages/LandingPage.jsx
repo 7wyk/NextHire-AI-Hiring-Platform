@@ -71,8 +71,8 @@ export default function LandingPage() {
           <span className="font-bold text-xl text-white">NextHire <span className="glow-text">AI</span></span>
         </div>
         <div className="flex items-center gap-3">
-          <Link to="/login" className="btn-ghost">Sign In</Link>
-          <Link to="/register" className="btn-primary">Get Started <ArrowRight size={15} /></Link>
+          <Link to="/candidate/login" className="btn-ghost">Candidate Login</Link>
+          <Link to="/recruiter/login" className="btn-primary">Recruiter Login <ArrowRight size={15} /></Link>
         </div>
       </nav>
 
@@ -107,11 +107,11 @@ export default function LandingPage() {
           initial="hidden" animate="visible" custom={3} variants={fadeUp}
           className="flex flex-col sm:flex-row items-center justify-center gap-4"
         >
-          <Link to="/register" className="btn-primary text-base px-7 py-3.5">
+          <Link to="/recruiter/signup" className="btn-primary text-base px-7 py-3.5">
             Start Hiring Free <ArrowRight size={17} />
           </Link>
-          <Link to="/login" className="btn-secondary text-base px-7 py-3.5">
-            Live Demo
+          <Link to="/candidate/signup" className="btn-secondary text-base px-7 py-3.5">
+            Join as Candidate
           </Link>
         </motion.div>
 
@@ -172,7 +172,7 @@ export default function LandingPage() {
         <div className="card-glow gradient-border p-12">
           <h2 className="text-4xl font-bold text-white mb-4">Ready to transform hiring?</h2>
           <p className="text-slate-400 mb-8">Join thousands of recruiters using NextHire AI to find perfect candidates faster.</p>
-          <Link to="/register" className="btn-primary text-base px-8 py-3.5">
+          <Link to="/recruiter/signup" className="btn-primary text-base px-8 py-3.5">
             Get Started for Free <ArrowRight size={17} />
           </Link>
         </div>
