@@ -1,4 +1,4 @@
-# NextHire AI v2 🚀
+# NextHire-AI
 
 > **Autonomous Multi-Agent AI Recruitment Platform**
 > Resume Screening · Coding IDE · AI Interviews · Candidate Ranking · Agent Dashboard
