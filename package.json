@@ -1,0 +1,15 @@
+{
+  "name": "nexthire-ai",
+  "version": "1.0.0",
+  "description": "NextHire AI – Production-grade AI Hiring Platform",
+  "private": true,
+  "scripts": {
+    "client": "cd client && npm run dev",
+    "server": "cd server && npm run dev",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "install:all": "npm install && cd client && npm install && cd ../server && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}

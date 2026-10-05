@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+Thumbs.db
+uploads/
+node_modules/
+.next/
+.env.local
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env.*
+!.env.example
