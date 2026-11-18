@@ -3,6 +3,22 @@ import { uploadFile, getFileUrl } from '../services/cloudinary.service.js'
 import Candidate from '../models/Candidate.js'
 import logger from '../config/logger.js'
 
+/**
+ * Resume files are private. A candidate may only touch their own candidate
+ * record; a recruiter only records they created; admins may inspect any.
+ */
+const canAccessCandidate = (user, candidate) => {
+  if (!user || !candidate) return false
+  if (user.role === 'admin') return true
+  if (user.role === 'recruiter') {
+    return !candidate.createdBy || String(candidate.createdBy) === String(user._id)
+  }
+  return (
+    Boolean(candidate.email) &&
+    String(candidate.email).toLowerCase() === String(user.email || '').toLowerCase()
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/upload/resume
 // multipart/form-data  |  field: "resume"  |  PDF / DOC / DOCX / TXT (max 5 MB)
@@ -27,6 +43,16 @@ export const uploadResume = async (req, res) => {
     // 2. If a candidateId was provided, persist the URL
     let candidate = null
     if (req.body.candidateId) {
+      const target = await Candidate.findById(req.body.candidateId).select('email createdBy')
+      if (!target) {
+        if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath)
+        return res.status(404).json({ message: 'Candidate not found' })
+      }
+      if (!canAccessCandidate(req.user, target)) {
+        if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath)
+        return res.status(403).json({ message: 'Access denied' })
+      }
+
       candidate = await Candidate.findByIdAndUpdate(
         req.body.candidateId,
         {
@@ -67,10 +93,15 @@ export const uploadResume = async (req, res) => {
 export const getResumeUrl = async (req, res) => {
   try {
     const candidate = await Candidate.findById(req.params.candidateId)
-      .select('resumePublicId resumeUrl name')
+      .select('resumePublicId resumeUrl name email createdBy')
 
     if (!candidate) {
       return res.status(404).json({ message: 'Candidate not found' })
+    }
+
+    // Ownership check — the route was authentication-only (IDOR).
+    if (!canAccessCandidate(req.user, candidate)) {
+      return res.status(403).json({ message: 'Access denied' })
     }
     if (!candidate.resumeUrl && !candidate.resumePublicId) {
       return res.status(404).json({ message: 'No resume found for this candidate' })

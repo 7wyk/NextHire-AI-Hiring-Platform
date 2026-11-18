@@ -7,14 +7,13 @@
   "scripts": {
     "dev": "nodemon index.js",
     "start": "node index.js",
-    "seed": "node seed.js"
+    "seed": "node seed.js",
+    "test": "node --test \"tests/*.test.js\"",
+    "migrate:totals": "node scripts/recomputeCandidateTotals.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1021.0",
-    "@aws-sdk/s3-request-presigner": "^3.1021.0",
-    "@langchain/community": "^1.1.29",
+    "@langchain/core": "^0.3.80",
     "@langchain/groq": "^0.1.2",
-    "@langchain/pinecone": "^1.0.3",
     "@pinecone-database/pinecone": "^3.0.3",
     "axios": "^1.7.7",
     "bcryptjs": "^2.4.3",
@@ -23,10 +22,8 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.1",
-    "express-validator": "^7.2.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
-    "langchain": "^0.3.5",
     "mongoose": "^8.7.1",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",

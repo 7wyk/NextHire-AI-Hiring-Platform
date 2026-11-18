@@ -1,16 +1,86 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
-dist/
+
+# ── Environment / secrets ────────────────────────────────────────────────────
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# ── Build output ─────────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+client/dist/
+out/
+*.tsbuildinfo
+
+# ── Runtime artefacts ────────────────────────────────────────────────────────
 *.log
+logs/
+server/logs/
+server/uploads/
+server/backups/
+uploads/
+*.pid
+npm-debug.log*
+yarn-error.log*
+
+# ── Caches / test output ────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+.vite/
+.cache/
+.turbo/
+.eslintcache
+
+# ── OS / editor ──────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-uploads/
-node_modules/
-.next/
-.env.local
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*.orig
+
+# ── Local agent workspace ────────────────────────────────────────────────────
+.freebuff/
+
+# ── Python (sandbox tooling) ─────────────────────────────────────────────────
 venv/
 .venv/
 __pycache__/
 *.pyc
+
+
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Environment variables
+.env
 .env.*
 !.env.example
+
+# Build files
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Coverage
+coverage/

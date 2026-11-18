@@ -3,11 +3,14 @@
  * Real-time push notifications for recruiters & candidates.
  * Namespace: /notifications
  *
- * Auth: client connects with { auth: { token } }
- * Server verifies JWT and auto-registers the user.
+ * Auth: the JWT is accepted from `handshake.auth.token` (API clients) or from
+ * the `nh_access` HttpOnly cookie the browser sends with the handshake (the
+ * cookie is the browser's only credential since SEC-04).
+ * Server verifies it and auto-registers the user.
  */
 import jwt from 'jsonwebtoken'
 import logger from '../config/logger.js'
+import { ACCESS_COOKIE, parseCookies } from '../config/cookies.js'
 
 // In-memory map: userId → Set of socketIds (multi-tab support)
 const userSockets = new Map()
@@ -17,7 +20,8 @@ export const registerNotificationSockets = (io) => {
 
   // ── JWT auth middleware on namespace ──────────────────────────────────────
   ns.use((socket, next) => {
-    const token = socket.handshake.auth?.token
+    const cookies = parseCookies(socket.handshake.headers?.cookie || '')
+    const token = socket.handshake.auth?.token || cookies?.[ACCESS_COOKIE]
     if (!token) return next(new Error('Authentication required'))
 
     try {

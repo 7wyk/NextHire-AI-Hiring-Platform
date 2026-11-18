@@ -22,6 +22,8 @@ import ResumePage       from './pages/resume/ResumePage'
 import RankingPage      from './pages/ranking/RankingPage'
 import CreateCodingTest from './pages/coding/CreateCodingTest'
 import JobApplicantsPage from './pages/applications/JobApplicantsPage'
+import InterviewPage     from './pages/interview/InterviewPage'
+import InterviewDetailView from './pages/interview/InterviewDetailView'
 
 // Pages — Candidate
 import PublicJobsPage     from './pages/jobs/PublicJobsPage'
@@ -50,10 +52,16 @@ function loginPath(attemptedRole) {
   return attemptedRole === 'recruiter' ? '/recruiter/login' : '/candidate/login'
 }
 
-/** Blocks unauthenticated users — redirects to role-appropriate login */
+/**
+ * Blocks unauthenticated users — redirects to role-appropriate login.
+ *
+ * The access token lives in an HttpOnly cookie and is never in the store, so
+ * "signed in" means "we have a user profile"; the API is the authority on
+ * whether the cookie is still valid (a 401 triggers refresh, then logout).
+ */
 function ProtectedRoute({ children }) {
-  const { token } = useAuthStore()
-  if (!token) return <Navigate to="/candidate/login" replace />
+  const { user } = useAuthStore()
+  if (!user) return <Navigate to="/candidate/login" replace />
   return children
 }
 
@@ -62,8 +70,8 @@ function ProtectedRoute({ children }) {
  * Redirects them to their role home instead of a blank error page.
  */
 function RoleRoute({ children, allowedRoles }) {
-  const { token, user } = useAuthStore()
-  if (!token) return <Navigate to={loginPath(allowedRoles?.[0])} replace />
+  const { user } = useAuthStore()
+  if (!user) return <Navigate to={loginPath(allowedRoles?.[0])} replace />
   if (!allowedRoles.includes(user?.role)) {
     return <Navigate to={roleHome(user?.role)} replace />
   }
@@ -72,16 +80,16 @@ function RoleRoute({ children, allowedRoles }) {
 
 /** Redirects already-authenticated users away from login/register */
 function GuestRoute({ children }) {
-  const { token, user } = useAuthStore()
-  if (token) return <Navigate to={roleHome(user?.role)} replace />
+  const { user } = useAuthStore()
+  if (user) return <Navigate to={roleHome(user?.role)} replace />
   return children
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const { user, token } = useAuthStore()
-  const isRecruiter = token && (user?.role === 'recruiter' || user?.role === 'admin')
+  const { user } = useAuthStore()
+  const isRecruiter = !!user && (user?.role === 'recruiter' || user?.role === 'admin')
 
   return (
     <>
@@ -135,6 +143,14 @@ export default function App() {
         <Route
           path="/jobs/:jobId/applicants"
           element={<RoleRoute allowedRoles={['recruiter','admin']}><JobApplicantsPage /></RoleRoute>}
+        />
+        <Route
+          path="/interviews"
+          element={<RoleRoute allowedRoles={['recruiter','admin']}><InterviewPage /></RoleRoute>}
+        />
+        <Route
+          path="/interviews/:sessionId"
+          element={<RoleRoute allowedRoles={['recruiter','admin']}><InterviewDetailView /></RoleRoute>}
         />
         <Route
           path="/agent-monitor"

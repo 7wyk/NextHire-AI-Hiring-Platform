@@ -1,24 +1,42 @@
 /**
  * interview.service.js
  *
- * AI-powered interview engine using Groq LLM.
- * All functions have robust fallbacks so the interview flow NEVER crashes,
- * even if the AI model is unavailable, deprecated, or rate-limited.
+ * AI interview engine (Groq).
+ *
+ * Scoring convention: EVERY interview score in this product is an integer
+ * 0–100. Per-answer evaluations are requested on 0–100 directly, so no layer
+ * multiplies or divides them afterwards. The final interview score is the mean
+ * of the evaluated answers — already on the same scale.
+ *
+ * Every function returns an explicit envelope:
+ *
+ *   { ok: true,  mock: false, ... }              genuine AI result
+ *   { ok: true,  mock: true,  ... }              synthetic, ONLY in explicit
+ *                                                AI_MOCK_MODE (non-production)
+ *   { ok: false, unavailable: true, reason }     nothing was evaluated
+ *
+ * A failed evaluation never yields a score, a summary, or a generic question
+ * dressed up as a personalised one.
  */
 
 import logger from '../config/logger.js'
 
-// ── Centralized model config ──────────────────────────────────────────────────
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b'
 
-// ── Lazy Groq initialization (same pattern as ai.service.js) ──────────────────
+/** Interview scores are always 0–100. */
+export const INTERVIEW_SCORE_MIN = 0
+export const INTERVIEW_SCORE_MAX = 100
+
 let groq = null
 let langchainMessages = null
+
+export const isAiMockMode = () =>
+  process.env.AI_MOCK_MODE === 'true' && process.env.NODE_ENV !== 'production'
 
 const initGroq = async () => {
   if (groq) return groq
   if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY.startsWith('your_')) {
-    logger.warn('[Interview AI] GROQ_API_KEY not configured — will use fallbacks')
+    logger.warn('[Interview AI] GROQ_API_KEY not configured')
     return null
   }
   try {
@@ -59,46 +77,68 @@ const invokeGroq = async (systemPrompt, messages) => {
 
   logger.info('[Interview AI] Invoking Groq', { model: GROQ_MODEL, messageCount: langchainMsgs.length })
   const response = await client.invoke(langchainMsgs)
-  return response.content.trim()
+  return String(response.content || '').trim()
 }
 
-// ── Mock / Fallback responses ─────────────────────────────────────────────────
+// ── Result helpers ────────────────────────────────────────────────────────────
 
-const FALLBACK_OPENING = (jobTitle) => ({
-  role: 'interviewer',
-  content: `Hello! I'm Alex, and I'll be conducting your technical interview today for the ${jobTitle || 'Software Engineer'} position. Thank you for taking the time to join us.\n\nLet's start with something foundational — can you walk me through your most impactful project and the technical decisions you made?`,
+const unavailable = (reason, message, err) => {
+  logger.error('[Interview AI] Evaluation unavailable', {
+    reason,
+    error: err?.message,     // server-side only
+  })
+  return {
+    ok: false,
+    unavailable: true,
+    reason,
+    message: message || 'AI evaluation is unavailable right now.',
+  }
+}
+
+const classify = (err) => {
+  const text = String(err?.message || '')
+  if (text.includes('not configured')) return 'not_configured'
+  if (text.includes('valid JSON') || text.includes('Invalid question count')) return 'invalid_response'
+  if (text.includes('429') || text.toLowerCase().includes('rate limit')) return 'rate_limited'
+  return 'request_failed'
+}
+
+/** Clamp an interview score to the single 0–100 scale. */
+export const normaliseInterviewScore = (value) => {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return null
+  return Math.max(INTERVIEW_SCORE_MIN, Math.min(INTERVIEW_SCORE_MAX, Math.round(num)))
+}
+
+const stringArray = (value, max = 5) =>
+  Array.isArray(value)
+    ? value.filter(item => typeof item === 'string' && item.trim()).slice(0, max)
+    : []
+
+// ── Mock-only content (never used outside explicit AI_MOCK_MODE) ─────────────
+
+const MOCK_OPENING = (jobTitle) => ({
+  message: `Hello! I'm Alex, and I'll be conducting your technical interview today for the ${jobTitle || 'Software Engineer'} position. Let's start with something foundational — can you walk me through your most impactful project and the technical decisions you made?`,
   category: 'behavioral',
 })
 
-const FALLBACK_FOLLOWUPS = [
-  { role: 'interviewer', content: 'That\'s interesting. Can you explain the architecture of that project? What were the key components and how did they communicate?' },
-  { role: 'interviewer', content: 'How do you approach debugging a complex issue in production? Walk me through your process.' },
-  { role: 'interviewer', content: 'Can you explain the difference between SQL and NoSQL databases? When would you choose one over the other?' },
-  { role: 'interviewer', content: 'Tell me about a time you had to learn a new technology quickly. How did you approach it?' },
-  { role: 'interviewer', content: 'How would you design a URL shortening service? Walk me through the high-level architecture.' },
-  { role: 'interviewer', content: 'Describe a situation where you had to work with a difficult team member. How did you handle it?' },
-  { role: 'interviewer', content: 'Thank you for your time today. I\'ve really enjoyed our conversation. I\'ll share my feedback with the team. Best of luck!' },
+const MOCK_FOLLOWUPS = [
+  'That\'s interesting. Can you explain the architecture of that project? What were the key components and how did they communicate?',
+  'How do you approach debugging a complex issue in production? Walk me through your process.',
+  'Can you explain the difference between SQL and NoSQL databases? When would you choose one over the other?',
+  'Tell me about a time you had to learn a new technology quickly. How did you approach it?',
+  'How would you design a URL shortening service? Walk me through the high-level architecture.',
+  'Describe a situation where you had to work with a difficult team member. How did you handle it?',
+  'Thank you for your time today. I\'ve really enjoyed our conversation. I\'ll share my feedback with the team. Best of luck!',
 ]
 
-const FALLBACK_EVALUATION = {
-  score: 6,
-  feedback: 'The candidate provided a reasonable answer. Further probing recommended.',
-  category: 'technical',
-  strength: 'Showed understanding of core concepts',
-  improvement: 'Could provide more specific examples',
-}
-
-const FALLBACK_SUMMARY = {
-  overall: 65,
-  technical: 60,
-  behavioral: 70,
-  communication: 65,
-  summary: 'The candidate demonstrated solid foundational knowledge with room for growth in advanced topics. Communication was clear and professional.',
-  strengths: ['Good communication skills', 'Solid foundational knowledge', 'Positive attitude'],
-  concerns: ['Limited depth on advanced technical topics', 'Could provide more concrete examples'],
-  recommendation: 'interview-next',
-  reasoning: 'Candidate shows potential but needs further evaluation on advanced technical skills.',
-}
+const MOCK_QUESTIONS = [
+  'Tell me about yourself and your professional background.',
+  'Explain a project from your resume that you are most proud of.',
+  'What are your core technical strengths and how have you applied them?',
+  'Describe a challenging technical problem you faced and how you solved it.',
+  'Why should we hire you for this role?',
+]
 
 // ── System prompt builder ─────────────────────────────────────────────────────
 
@@ -121,9 +161,9 @@ Your interview style:
 After 5-7 questions, you may wrap up with "Thank you for your time. I'll share my feedback with the team."
 `.trim()
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// ── Recruiter-initiated flow ─────────────────────────────────────────────────
 
-/** Generate the first interview question */
+/** Generate the first interview question. */
 export const startInterview = async ({ jobTitle, resumeText, resumeSkills }) => {
   const resumeSummary = resumeSkills?.length > 0
     ? `Skills: ${resumeSkills.join(', ')}. ${resumeText?.substring(0, 300) || ''}`
@@ -135,21 +175,24 @@ export const startInterview = async ({ jobTitle, resumeText, resumeSkills }) => 
       [{ role: 'human', content: 'Please start the interview with a warm welcome and your first question.' }]
     )
 
+    if (!content) throw new Error('AI returned an empty opening')
     logger.info('[Interview AI] Opening question generated via AI', { jobTitle })
-    return { role: 'interviewer', content, category: 'technical' }
+    return { ok: true, mock: false, message: content, category: 'technical' }
   } catch (err) {
-    logger.warn('[Interview AI] startInterview falling back to mock', { error: err.message })
-    return FALLBACK_OPENING(jobTitle)
+    if (isAiMockMode()) {
+      logger.warn('[Interview AI] MOCK MODE — synthetic opening question')
+      return { ok: true, mock: true, ...MOCK_OPENING(jobTitle) }
+    }
+    return unavailable(classify(err), 'The AI interviewer is unavailable. The interview was not started.', err)
   }
 }
 
-/** Continue the interview given full message history */
+/** Continue the interview given full message history. */
 export const continueInterview = async ({ jobTitle, resumeText, resumeSkills, messages, questionCount }) => {
   const resumeSummary = resumeSkills?.length > 0
     ? `Skills: ${resumeSkills.join(', ')}`
     : resumeText?.substring(0, 200) || 'Not provided'
 
-  // After 6+ questions, signal wrap-up
   const wrapUpHint = questionCount >= 6
     ? '\n\nNote: This is the final question. After the candidate answers, thank them and conclude the interview.'
     : ''
@@ -160,18 +203,28 @@ export const continueInterview = async ({ jobTitle, resumeText, resumeSkills, me
       messages.map(m => ({ role: m.role, content: m.content }))
     )
 
+    if (!content) throw new Error('AI returned an empty follow-up')
     logger.info('[Interview AI] Follow-up question generated', { questionCount })
-    return { role: 'interviewer', content }
+    return { ok: true, mock: false, message: content }
   } catch (err) {
-    logger.warn('[Interview AI] continueInterview falling back to mock', { error: err.message, questionCount })
-    // Pick a fallback question based on the question count
-    const idx = Math.min(questionCount - 1, FALLBACK_FOLLOWUPS.length - 1)
-    return FALLBACK_FOLLOWUPS[idx]
+    if (isAiMockMode()) {
+      logger.warn('[Interview AI] MOCK MODE — synthetic follow-up question')
+      const idx = Math.min(Math.max(questionCount - 1, 0), MOCK_FOLLOWUPS.length - 1)
+      return { ok: true, mock: true, message: MOCK_FOLLOWUPS[idx] }
+    }
+    return unavailable(classify(err), 'The AI interviewer could not continue. No next question was generated.', err)
   }
 }
 
-/** Evaluate a single candidate answer */
+/**
+ * Evaluate a single answer (recruiter flow).
+ * Score is an integer 0–100, the only scale used for interview scores.
+ */
 export const evaluateAnswer = async ({ question, answer, jobTitle }) => {
+  if (!answer || !answer.trim()) {
+    return { ok: true, mock: false, score: 0, feedback: 'No answer was provided.', category: 'technical' }
+  }
+
   const prompt = `
 Role: ${jobTitle}
 Question asked: ${question}
@@ -179,7 +232,7 @@ Candidate answer: ${answer}
 
 Evaluate this answer. Return ONLY valid JSON:
 {
-  "score": <integer 0-10>,
+  "score": <integer 0-100, where 100 is a perfect answer>,
   "feedback": "<brief constructive feedback in 1-2 sentences>",
   "category": "<technical|behavioral|system-design|communication>",
   "strength": "<what they did well>",
@@ -188,22 +241,41 @@ Evaluate this answer. Return ONLY valid JSON:
 
   try {
     const content = await invokeGroq(
-      'You are a technical interview evaluator. Return ONLY valid JSON.',
+      'You are a technical interview evaluator. Return ONLY valid JSON. Scores are integers from 0 to 100.',
       [{ role: 'human', content: prompt }]
     )
 
     const jsonMatch = content.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return FALLBACK_EVALUATION
+    if (!jsonMatch) throw new Error('AI did not return valid JSON')
     const parsed = JSON.parse(jsonMatch[0])
-    logger.info('[Interview AI] Answer evaluated via AI', { score: parsed.score })
-    return parsed
+
+    const score = normaliseInterviewScore(parsed.score)
+    if (score === null) throw new Error('AI response missing a numeric score')
+
+    return {
+      ok: true,
+      mock: false,
+      score,
+      feedback: typeof parsed.feedback === 'string' ? parsed.feedback : '',
+      category: ['technical', 'behavioral', 'system-design', 'communication'].includes(parsed.category)
+        ? parsed.category
+        : 'technical',
+      strength: typeof parsed.strength === 'string' ? parsed.strength : '',
+      improvement: typeof parsed.improvement === 'string' ? parsed.improvement : '',
+    }
   } catch (err) {
-    logger.warn('[Interview AI] evaluateAnswer falling back to mock', { error: err.message })
-    return FALLBACK_EVALUATION
+    if (isAiMockMode()) {
+      logger.warn('[Interview AI] MOCK MODE — synthetic answer evaluation')
+      return { ok: true, mock: true, score: 60, feedback: 'Synthetic evaluation (mock mode).', category: 'technical' }
+    }
+    return unavailable(classify(err), 'This answer could not be evaluated.', err)
   }
 }
 
-/** Generate final interview summary after session ends */
+/**
+ * Generate the final interview summary (recruiter flow).
+ * Scores are 0–100 — the same scale as per-answer evaluation.
+ */
 export const generateInterviewSummary = async ({ jobTitle, messages }) => {
   const transcript = messages
     .map(m => `${m.role === 'interviewer' ? 'Interviewer' : 'Candidate'}: ${m.content}`)
@@ -215,7 +287,7 @@ Review this complete interview transcript for the role: ${jobTitle}
 TRANSCRIPT:
 ${transcript.substring(0, 4000)}
 
-Provide a comprehensive evaluation. Return ONLY valid JSON:
+Provide a comprehensive evaluation. Return ONLY valid JSON (all scores are integers 0-100):
 {
   "overall": <integer 0-100>,
   "technical": <integer 0-100>,
@@ -237,27 +309,53 @@ Provide a comprehensive evaluation. Return ONLY valid JSON:
     const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('AI did not return valid JSON')
     const parsed = JSON.parse(jsonMatch[0])
-    logger.info('[Interview AI] Summary generated via AI', { overall: parsed.overall, recommendation: parsed.recommendation })
-    return parsed
+
+    const overall = normaliseInterviewScore(parsed.overall)
+    if (overall === null) throw new Error('AI response missing a numeric overall score')
+
+    return {
+      ok: true,
+      mock: false,
+      overall,
+      technical: normaliseInterviewScore(parsed.technical) ?? 0,
+      behavioral: normaliseInterviewScore(parsed.behavioral) ?? 0,
+      communication: normaliseInterviewScore(parsed.communication) ?? 0,
+      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+      strengths: stringArray(parsed.strengths, 3),
+      concerns: stringArray(parsed.concerns, 3),
+      recommendation: ['hire', 'interview-next', 'reject'].includes(parsed.recommendation)
+        ? parsed.recommendation
+        : 'interview-next',
+      reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
+    }
   } catch (err) {
-    logger.warn('[Interview AI] generateInterviewSummary falling back to mock', { error: err.message })
-    return FALLBACK_SUMMARY
+    if (isAiMockMode()) {
+      logger.warn('[Interview AI] MOCK MODE — synthetic interview summary')
+      return {
+        ok: true,
+        mock: true,
+        overall: 65,
+        technical: 60,
+        behavioral: 70,
+        communication: 65,
+        summary: 'Synthetic summary (mock mode).',
+        strengths: ['Synthetic strength'],
+        concerns: ['Synthetic concern'],
+        recommendation: 'interview-next',
+        reasoning: 'Mock mode is enabled; this is not a real evaluation.',
+      }
+    }
+    return unavailable(classify(err), 'The interview summary could not be generated.', err)
   }
 }
 
-// ── Candidate-initiated interview helpers ─────────────────────────────────
-
-const FALLBACK_QUESTIONS = [
-  'Tell me about yourself and your professional background.',
-  'Explain a project from your resume that you are most proud of.',
-  'What are your core technical strengths and how have you applied them?',
-  'Describe a challenging technical problem you faced and how you solved it.',
-  'Why should we hire you for this role?',
-]
+// ── Candidate-initiated flow ─────────────────────────────────────────────────
 
 /**
- * Generate 5 resume-based interview questions.
- * Falls back to generic questions if AI is unavailable.
+ * Generate 5 questions based on the candidate's resume.
+ * There is no generic-question fallback: if the AI cannot personalise them, the
+ * caller is told so rather than being given stock questions labelled as
+ * resume-derived.
  */
 export const generateResumeBasedQuestions = async ({ resumeText, jobTitle }) => {
   const prompt = `
@@ -286,24 +384,34 @@ Return ONLY a valid JSON array, e.g.: ["Q1", "Q2", "Q3", "Q4", "Q5"]
     if (!jsonMatch) throw new Error('AI did not return a valid JSON array')
     const parsed = JSON.parse(jsonMatch[0])
 
-    if (!Array.isArray(parsed) || parsed.length < 5) throw new Error('Invalid question count')
+    const questions = Array.isArray(parsed)
+      ? parsed.filter(q => typeof q === 'string' && q.trim())
+      : []
+    if (questions.length < 5) throw new Error('Invalid question count')
 
-    logger.info('[Interview AI] Resume-based questions generated', { count: parsed.length, jobTitle })
-    return parsed.slice(0, 5)
+    logger.info('[Interview AI] Resume-based questions generated', { count: questions.length, jobTitle })
+    return { ok: true, mock: false, questions: questions.slice(0, 5) }
   } catch (err) {
-    logger.warn('[Interview AI] generateResumeBasedQuestions falling back to generic', { error: err.message })
-    return FALLBACK_QUESTIONS
+    if (isAiMockMode()) {
+      logger.warn('[Interview AI] MOCK MODE — generic questions (not resume-derived)')
+      return { ok: true, mock: true, questions: MOCK_QUESTIONS }
+    }
+    return unavailable(
+      classify(err),
+      'Interview questions could not be generated from your resume right now. Please try again later.',
+      err
+    )
   }
 }
 
 /**
- * Evaluate a single candidate answer. Returns { score: 0-100, feedback: string }.
- * Falls back to random score 60-100 if AI is unavailable.
+ * Evaluate one candidate answer on the 0–100 scale.
+ * No random or invented score is ever returned.
  */
 export const evaluateInterviewAnswer = async ({ question, answer, jobTitle }) => {
-  // Empty / very short answers get a low score immediately
-  if (!answer || answer.trim().length < 5) {
-    return { score: 20, feedback: 'No meaningful answer was provided.' }
+  // Nothing was said: that is a genuine zero, not a missing evaluation.
+  if (!answer || !answer.trim()) {
+    return { ok: true, mock: false, score: 0, feedback: 'No answer was provided.' }
   }
 
   const prompt = `
@@ -311,7 +419,7 @@ Role: ${jobTitle || 'Software Engineer'}
 Question: ${question}
 Candidate Answer: ${answer}
 
-Evaluate this interview answer on a scale of 0-100.
+Evaluate this interview answer on a scale of 0-100 (100 = perfect).
 Return ONLY valid JSON:
 {
   "score": <integer 0-100>,
@@ -320,7 +428,7 @@ Return ONLY valid JSON:
 
   try {
     const content = await invokeGroq(
-      'You are a technical interview evaluator. Return ONLY valid JSON with score and feedback.',
+      'You are a technical interview evaluator. Return ONLY valid JSON with score (0-100) and feedback.',
       [{ role: 'human', content: prompt }]
     )
 
@@ -328,14 +436,21 @@ Return ONLY valid JSON:
     if (!jsonMatch) throw new Error('AI did not return valid JSON')
     const parsed = JSON.parse(jsonMatch[0])
 
-    const score = Math.max(0, Math.min(100, parseInt(parsed.score) || 60))
+    const score = normaliseInterviewScore(parsed.score)
+    if (score === null) throw new Error('AI response missing a numeric score')
+
     logger.info('[Interview AI] Answer evaluated', { score, jobTitle })
-    return { score, feedback: parsed.feedback || 'Evaluated successfully.' }
-  } catch (err) {
-    logger.warn('[Interview AI] evaluateInterviewAnswer falling back to mock', { error: err.message })
     return {
-      score: Math.floor(Math.random() * 40) + 60,
-      feedback: 'Decent answer. Improve clarity and technical depth.',
+      ok: true,
+      mock: false,
+      score,
+      feedback: typeof parsed.feedback === 'string' ? parsed.feedback : 'Evaluated.',
     }
+  } catch (err) {
+    if (isAiMockMode()) {
+      logger.warn('[Interview AI] MOCK MODE — synthetic answer evaluation')
+      return { ok: true, mock: true, score: 60, feedback: 'Synthetic evaluation (mock mode).' }
+    }
+    return unavailable(classify(err), 'This answer could not be evaluated by the AI.', err)
   }
 }

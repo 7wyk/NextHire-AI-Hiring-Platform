@@ -1,52 +1,52 @@
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Search, Briefcase, MapPin, Clock, Users,
-  ChevronDown, X, Send, CheckCircle2, DollarSign,
-  FileText, Upload, Loader2
+  Search, Briefcase, MapPin, Send, CheckCircle2, FileText, X, Loader2,
 } from 'lucide-react'
 import api from '../../services/api'
 import toast from 'react-hot-toast'
+import {
+  PageHeader, EmptyState, Modal, Field, Pagination, Alert,
+} from '../../components/ui'
 
-const typeColors = {
-  'full-time':  'badge-primary',
-  'part-time':  'badge-warning',
-  'contract':   'badge-success',
-  'internship': 'badge',
+const TYPE_LABEL = {
+  'full-time': 'Full-time',
+  'part-time': 'Part-time',
+  'contract': 'Contract',
+  'internship': 'Internship',
 }
 
 const APPLY_EMPTY = { coverLetter: '' }
 
 export default function PublicJobsPage() {
-  const [jobs, setJobs]           = useState([])
-  const [total, setTotal]         = useState(0)
-  const [loading, setLoading]     = useState(true)
-  const [search, setSearch]       = useState('')
+  const [jobs, setJobs] = useState([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [locationFilter, setLocationFilter] = useState('')
-  const [page, setPage]           = useState(1)
-  const [pages, setPages]         = useState(1)
+  const [page, setPage] = useState(1)
+  const [pages, setPages] = useState(1)
 
-  // Apply modal state
-  const [applyJob, setApplyJob]   = useState(null)
+  const [applyJob, setApplyJob] = useState(null)
   const [applyForm, setApplyForm] = useState(APPLY_EMPTY)
   const [resumeFile, setResumeFile] = useState(null)
-  const [applying, setApplying]   = useState(false)
-  const [applied, setApplied]     = useState(new Set())
+  const [applying, setApplying] = useState(false)
+  const [applyError, setApplyError] = useState('')
+  const [applied, setApplied] = useState(new Set())
 
   const fetchJobs = async () => {
     setLoading(true)
     try {
       const params = { page, limit: 9 }
-      if (search)        params.search   = search
-      if (typeFilter)    params.type     = typeFilter
+      if (search) params.search = search
+      if (typeFilter) params.type = typeFilter
       if (locationFilter) params.location = locationFilter
       const { data } = await api.get('/jobs/public', { params })
-      setJobs(data.jobs)
-      setTotal(data.total)
+      setJobs(data.jobs || [])
+      setTotal(data.total || 0)
       setPages(data.pages || 1)
     } catch {
-      toast.error('Failed to load jobs')
+      toast.error('Could not load open roles')
     } finally {
       setLoading(false)
     }
@@ -54,32 +54,31 @@ export default function PublicJobsPage() {
 
   useEffect(() => { fetchJobs() }, [search, typeFilter, locationFilter, page])
 
-  // Applied roles must survive a page refresh and a new browser session.
   useEffect(() => {
     api.get('/applications/mine/job-ids')
       .then(({ data }) => setApplied(new Set(data.jobIds || [])))
       .catch(() => {})
   }, [])
 
-  // Reset to page 1 when filters change
   useEffect(() => { setPage(1) }, [search, typeFilter, locationFilter])
 
   const openApply = (job) => {
     if (applied.has(job._id)) {
-      toast('Already applied for this role.', { icon: 'ℹ️' })
+      toast('You have already applied to this role')
       return
     }
     setApplyJob(job)
     setApplyForm(APPLY_EMPTY)
     setResumeFile(null)
+    setApplyError('')
   }
 
   const handleApply = async (e) => {
     e.preventDefault()
     if (!applyJob) return
     setApplying(true)
+    setApplyError('')
     try {
-      // Use FormData to send resume file + text fields
       const formData = new FormData()
       formData.append('jobId', applyJob._id)
       if (applyForm.coverLetter) formData.append('coverLetter', applyForm.coverLetter)
@@ -89,302 +88,221 @@ export default function PublicJobsPage() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setApplied(prev => new Set([...prev, applyJob._id]))
-      toast.success(`Applied to "${applyJob.title}" successfully! 🎉`)
+      toast.success(`Application sent to ${applyJob.title}`)
       setApplyJob(null)
     } catch (err) {
-      const msg = err.response?.data?.message || 'Application failed'
-      toast.error(msg)
+      setApplyError(err.response?.data?.message || 'Application failed. Try again.')
     } finally {
       setApplying(false)
     }
   }
 
   return (
-    <div className="space-y-5 animate-fade-in">
-      {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-white mb-1">Browse Jobs</h1>
-        <p className="text-slate-400 text-sm">{total} open position{total !== 1 ? 's' : ''} available</p>
-      </div>
+    <div className="animate-fade-in">
+      <PageHeader
+        title="Browse jobs"
+        description={loading ? 'Loading open roles' : `${total} open position${total === 1 ? '' : 's'}`}
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        {/* Search */}
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4" />
+      <div className="flex flex-wrap items-center gap-2 pb-4">
+        <div className="relative flex-1 min-w-[180px] max-w-[300px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
           <input
             type="text"
-            placeholder="Search roles, skills…"
+            placeholder="Search roles or skills"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="input pl-9 w-full"
+            className="input pl-8"
+            aria-label="Search roles"
           />
         </div>
-
-        {/* Type filter */}
-        <div className="relative">
-          <select
-            className="input pr-9 appearance-none cursor-pointer"
-            value={typeFilter}
-            onChange={e => setTypeFilter(e.target.value)}
-          >
-            <option value="">All Types</option>
-            <option value="full-time">Full-time</option>
-            <option value="part-time">Part-time</option>
-            <option value="contract">Contract</option>
-            <option value="internship">Internship</option>
-          </select>
-          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4 pointer-events-none" />
-        </div>
-
-        {/* Location filter */}
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Location…"
-            value={locationFilter}
-            onChange={e => setLocationFilter(e.target.value)}
-            className="input w-36"
-          />
-        </div>
+        <select
+          className="input w-auto min-w-[130px]"
+          value={typeFilter}
+          onChange={e => setTypeFilter(e.target.value)}
+          aria-label="Employment type"
+        >
+          <option value="">All types</option>
+          {Object.entries(TYPE_LABEL).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Location"
+          value={locationFilter}
+          onChange={e => setLocationFilter(e.target.value)}
+          className="input w-auto min-w-[130px]"
+          aria-label="Location"
+        />
       </div>
 
-      {/* Job Grid */}
       {loading ? (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="card h-52 animate-pulse bg-surface-700" />
+            <div key={i} className="card h-[180px] animate-pulse bg-ink-100/60" />
           ))}
         </div>
       ) : jobs.length === 0 ? (
-        <div className="card text-center py-16">
-          <Briefcase className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-          <p className="text-slate-400">No open positions match your filters.</p>
+        <div className="card">
+          <EmptyState
+            icon={Briefcase}
+            title="No open roles match those filters"
+            description="Try a different search term, type or location."
+          />
         </div>
       ) : (
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {jobs.map((job, i) => {
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {jobs.map(job => {
             const hasApplied = applied.has(job._id)
+            const salary = job.salaryMin && job.salaryMax
+              ? `$${job.salaryMin.toLocaleString()} – $${job.salaryMax.toLocaleString()}`
+              : job.salaryMin ? `From $${job.salaryMin.toLocaleString()}` : null
+
             return (
-              <motion.div
-                key={job._id}
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-                className="card flex flex-col"
-              >
-                {/* Top row */}
-                <div className="flex items-start justify-between mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-primary-500/15 border border-primary-500/20 flex items-center justify-center">
-                    <Briefcase className="w-5 h-5 text-primary-400" />
+              <article key={job._id} className="card flex flex-col p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-[14px] font-medium text-ink-900 leading-5">{job.title}</h2>
+                    <p className="text-[12.5px] text-ink-500 mt-0.5 truncate">
+                      {job.recruiter?.company || job.company}
+                    </p>
                   </div>
-                  <span className={`${typeColors[job.type] || 'badge'} badge capitalize`}>{job.type}</span>
+                  <span className="pill-neutral flex-shrink-0">{TYPE_LABEL[job.type] || job.type}</span>
                 </div>
 
-                <h3 className="font-semibold text-white mb-1 line-clamp-1">{job.title}</h3>
-                <p className="text-slate-400 text-sm mb-3">
-                  {job.recruiter?.company || job.company}
-                </p>
-
-                {/* Meta */}
-                <div className="space-y-1.5 mb-3 text-xs text-slate-400">
+                <dl className="mt-4 space-y-1.5 text-[12.5px] text-ink-600">
                   <div className="flex items-center gap-2">
-                    <MapPin size={12} /> {job.location}
+                    <MapPin size={12} className="text-ink-400" strokeWidth={1.7} />
+                    <dd>{job.location || 'Not specified'}</dd>
                   </div>
-                  {(job.salaryMin || job.salaryMax) && (
+                  {salary && (
                     <div className="flex items-center gap-2">
-                      <DollarSign size={12} />
-                      {job.salaryMin ? `$${job.salaryMin.toLocaleString()}` : ''}
-                      {job.salaryMax ? ` – $${job.salaryMax.toLocaleString()}` : ''}
+                      <span className="num text-ink-400 text-[11px]">USD</span>
+                      <dd className="num">{salary}</dd>
                     </div>
                   )}
                   <div className="flex items-center gap-2">
-                    <Users size={12} /> {job.applicantCount} applicant{job.applicantCount !== 1 ? 's' : ''}
+                    <Briefcase size={12} className="text-ink-400" strokeWidth={1.7} />
+                    <dd>{job.applicantCount || 0} applicant{job.applicantCount === 1 ? '' : 's'}</dd>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Clock size={12} /> {new Date(job.createdAt).toLocaleDateString()}
-                  </div>
-                </div>
+                </dl>
 
-                {/* Skills */}
                 {job.skills?.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-4">
-                    {job.skills.slice(0, 4).map(s => (
-                      <span key={s} className="badge bg-surface-600 text-slate-300 border-white/10 text-xs">{s}</span>
-                    ))}
-                    {job.skills.length > 4 && (
-                      <span className="text-slate-500 text-xs">+{job.skills.length - 4}</span>
-                    )}
-                  </div>
+                  <p className="text-[12px] text-ink-500 mt-3 leading-5">
+                    {job.skills.slice(0, 4).join(' · ')}
+                    {job.skills.length > 4 && ` +${job.skills.length - 4}`}
+                  </p>
                 )}
 
-                {/* Apply button */}
-                <div className="mt-auto pt-3 border-t border-white/[0.06]">
+                <div className="mt-auto pt-4">
                   {hasApplied ? (
                     <button
                       id={`applied-${job._id}`}
                       onClick={() => openApply(job)}
-                      className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-emerald-400 text-sm font-medium bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/15 transition-colors"
+                      className="btn-secondary w-full text-positive-600"
                     >
-                      <CheckCircle2 size={16} /> Applied
+                      <CheckCircle2 size={14} strokeWidth={1.8} />
+                      Applied
                     </button>
                   ) : (
                     <button
                       id={`apply-${job._id}`}
                       onClick={() => openApply(job)}
-                      className="btn-primary w-full justify-center text-sm"
+                      className="btn-primary w-full"
                     >
-                      <Send size={14} /> Apply Now
+                      Apply
+                      <Send size={13} strokeWidth={1.8} />
                     </button>
                   )}
                 </div>
-              </motion.div>
+              </article>
             )
           })}
         </div>
       )}
 
-      {/* Pagination */}
-      {pages > 1 && (
-        <div className="flex items-center justify-center gap-2 pt-2">
-          <button
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="btn-ghost text-sm disabled:opacity-40"
-          >
-            ← Prev
-          </button>
-          <span className="text-slate-400 text-sm">Page {page} of {pages}</span>
-          <button
-            onClick={() => setPage(p => Math.min(pages, p + 1))}
-            disabled={page === pages}
-            className="btn-ghost text-sm disabled:opacity-40"
-          >
-            Next →
-          </button>
-        </div>
-      )}
+      <div className="mt-4">
+        <Pagination page={page} pages={pages} onChange={setPage} />
+      </div>
 
-      {/* Apply Modal */}
-      <AnimatePresence>
-        {applyJob && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-            onClick={e => e.target === e.currentTarget && setApplyJob(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-surface-800 border border-white/[0.1] rounded-2xl p-6 w-full max-w-md"
+      <Modal
+        open={Boolean(applyJob)}
+        onClose={() => setApplyJob(null)}
+        title={applyJob ? `Apply to ${applyJob.title}` : ''}
+        description={applyJob ? (applyJob.recruiter?.company || applyJob.company) : ''}
+        footer={
+          <>
+            <button type="button" onClick={() => setApplyJob(null)} className="btn-secondary">Cancel</button>
+            <button
+              id="submit-apply-btn"
+              type="submit"
+              form="apply-form"
+              disabled={applying}
+              className="btn-primary"
             >
-              {/* Modal header */}
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-white">{applyJob.title}</h3>
-                  <p className="text-slate-400 text-sm">{applyJob.recruiter?.company || applyJob.company}</p>
+              {applying ? <><Loader2 size={14} className="animate-spin" /> Sending</> : 'Submit application'}
+            </button>
+          </>
+        }
+      >
+        <form id="apply-form" onSubmit={handleApply} className="space-y-4">
+          {applyError && <Alert tone="danger">{applyError}</Alert>}
+
+          <Field label="Resume" hint="PDF, DOC or TXT, up to 5 MB. Screening runs against this file.">
+            {resumeFile ? (
+              <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-line bg-ink-50">
+                <FileText size={15} className="text-ink-500 flex-shrink-0" strokeWidth={1.7} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] text-ink-900 truncate">{resumeFile.name}</p>
+                  <p className="num text-[11px] text-ink-500">{(resumeFile.size / 1024).toFixed(0)} KB</p>
                 </div>
                 <button
-                  onClick={() => setApplyJob(null)}
-                  className="text-slate-400 hover:text-white p-1 ml-3"
+                  type="button"
+                  onClick={() => setResumeFile(null)}
+                  className="p-1 text-ink-400 hover:text-ink-800"
+                  aria-label="Remove resume"
                 >
-                  <X size={20} />
+                  <X size={14} />
                 </button>
               </div>
+            ) : (
+              <label className="flex items-center gap-3 px-3 py-3 rounded-lg border border-dashed border-ink-200 hover:border-ink-300 bg-white cursor-pointer transition-colors">
+                <FileText size={15} className="text-ink-400" strokeWidth={1.7} />
+                <span className="text-[13px] text-ink-600">Choose a resume file</span>
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0]
+                    if (!f) return
+                    if (f.size > 5 * 1024 * 1024) {
+                      toast.error('That file is larger than 5 MB')
+                      return
+                    }
+                    setResumeFile(f)
+                  }}
+                />
+              </label>
+            )}
+          </Field>
 
-              <form onSubmit={handleApply} className="space-y-4">
-                {/* Resume Upload */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                    Resume <span className="text-primary-400">*recommended</span>
-                  </label>
-                  {resumeFile ? (
-                    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary-500/10 border border-primary-500/20">
-                      <FileText size={18} className="text-primary-400 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-white text-sm font-medium truncate">{resumeFile.name}</p>
-                        <p className="text-slate-400 text-xs">{(resumeFile.size / 1024).toFixed(0)} KB</p>
-                      </div>
-                      <button type="button" onClick={() => setResumeFile(null)}
-                        className="text-slate-400 hover:text-red-400 transition-colors">
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <label className="flex flex-col items-center gap-2 px-4 py-6 rounded-xl border-2 border-dashed border-white/10 hover:border-primary-500/30 bg-surface-700/50 cursor-pointer transition-colors">
-                      <Upload size={22} className="text-slate-500" />
-                      <p className="text-slate-400 text-sm">Click to upload PDF, DOC, or TXT</p>
-                      <p className="text-slate-600 text-xs">Max 5MB</p>
-                      <input
-                        type="file"
-                        accept=".pdf,.doc,.docx,.txt"
-                        className="hidden"
-                        onChange={e => {
-                          const f = e.target.files?.[0]
-                          if (f) {
-                            if (f.size > 5 * 1024 * 1024) {
-                              toast.error('File too large (max 5MB)')
-                              return
-                            }
-                            setResumeFile(f)
-                          }
-                        }}
-                      />
-                    </label>
-                  )}
-                </div>
-
-                {/* Cover Letter */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                    Cover Letter <span className="text-slate-500 font-normal">(optional)</span>
-                  </label>
-                  <textarea
-                    className="input resize-none"
-                    rows={4}
-                    placeholder="Introduce yourself, highlight relevant experience…"
-                    value={applyForm.coverLetter}
-                    onChange={e => setApplyForm({ coverLetter: e.target.value })}
-                    maxLength={2000}
-                  />
-                  <p className="text-slate-500 text-xs mt-1 text-right">
-                    {applyForm.coverLetter.length}/2000
-                  </p>
-                </div>
-
-                <div className="flex gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setApplyJob(null)}
-                    className="btn-secondary flex-1 justify-center"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    id="submit-apply-btn"
-                    type="submit"
-                    disabled={applying}
-                    className="btn-primary flex-1 justify-center"
-                  >
-                    {applying ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 size={14} className="animate-spin" /> Submitting…
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <Send size={14} /> Submit Application
-                      </span>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          <Field label="Cover letter" hint="Optional, up to 2000 characters.">
+            <textarea
+              className="input"
+              rows={5}
+              placeholder="Why this role, and what you have shipped that is relevant."
+              value={applyForm.coverLetter}
+              onChange={e => setApplyForm({ coverLetter: e.target.value })}
+              maxLength={2000}
+            />
+            <p className="num text-[11px] text-ink-400 text-right mt-1">
+              {applyForm.coverLetter.length}/2000
+            </p>
+          </Field>
+        </form>
+      </Modal>
     </div>
   )
 }

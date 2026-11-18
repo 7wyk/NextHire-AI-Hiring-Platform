@@ -11,6 +11,7 @@ import logger from '../config/logger.js'
 import { supervisorAgent } from '../agents/supervisor.agent.js'
 import { storeResumeEvaluation } from '../memory/candidate.memory.js'
 import { searchCandidates } from '../services/vectorless.service.js'
+import { applyResumeResult, normaliseEmail } from '../services/candidateProfile.service.js'
 
 /**
  * POST /api/resume/screen
@@ -65,39 +66,52 @@ export const screenResume = async (req, res) => {
       aiResult = await screenResumeWithAI(resumeText, jobDescription)
     }
 
-    // 6. Create or update Candidate
-    let candidate = await Candidate.findOne({ email: candidateEmail, job: jobId })
-    if (!candidate) {
-      candidate = new Candidate({
-        name: candidateName || 'Unknown',
-        email: candidateEmail || `auto-${Date.now()}@nexthire.ai`,
-        job: jobId,
-        createdBy: req.user._id,
+    // No fabricated result: if the model did not evaluate, nothing is saved.
+    if (!aiResult?.ok) {
+      logger.warn('[Resume] Screening unavailable', {
+        recruiterId: String(req.user._id), jobId: String(jobId), reason: aiResult?.reason,
+      })
+      return res.status(503).json({
+        message: aiResult?.message || 'AI screening is unavailable right now. No score was recorded.',
+        evaluationUnavailable: true,
+        reason: aiResult?.reason,
       })
     }
 
-    candidate.resumeText     = resumeText.substring(0, 5000)
-    candidate.resumeUrl      = resumeUrl
-    candidate.resumePublicId = resumePublicId
-    candidate.skills         = aiResult.skills || []
-    candidate.experience     = aiResult.experience || 0
-    candidate.resumeScore    = aiResult.score || 0
-    candidate.aiSummary      = aiResult.summary || ''
-    candidate.strengths      = aiResult.strengths || []
-    candidate.weaknesses     = aiResult.weaknesses || []
-    candidate.totalScore     = aiResult.score || 0
+    // 6. Persist through the scoring service — it owns the composite total.
+    //    The raw resume score must never be written into `totalScore`: that is
+    //    exactly what made a 75-point resume look like a 75/100 candidate.
+    const candidate = await applyResumeResult({
+      jobId,
+      email: normaliseEmail(candidateEmail) || `auto-${Date.now()}@nexthire.ai`,
+      name: candidateName || 'Unknown',
+      recruiterId: req.user._id,
+      resumeScore: aiResult.score,
+      resumeFields: {
+        resumeText:     resumeText.substring(0, 5000),
+        resumeUrl,
+        resumePublicId,
+        skills:         aiResult.skills || [],
+        experience:     aiResult.experience || 0,
+        aiSummary:      aiResult.summary || '',
+        strengths:      aiResult.strengths || [],
+        weaknesses:     aiResult.weaknesses || [],
+        ...(aiResult.recommendation === 'hire' || aiResult.recommendation === 'interview'
+          ? { status: 'screening' }
+          : {}),
+      },
+    })
 
-    if (aiResult.recommendation === 'hire' || aiResult.recommendation === 'interview') {
-      candidate.status = 'screening'
+    if (!candidate) {
+      return res.status(500).json({ message: 'Could not persist the screening result for this candidate' })
     }
-
-    await candidate.save()
 
     // 7. Store in AI memory (non-blocking)
     storeResumeEvaluation(candidate._id, jobId, aiResult).catch(() => {})
 
-    // 8. Increment job applicant count
-    await Job.findByIdAndUpdate(jobId, { $inc: { applicantCount: 1 } })
+    // NOTE: screening a resume is not an application. Counting it as one
+    // inflated `job.applicantCount` (BE-08); the authoritative count is derived
+    // from the Application collection instead (see dashboard + reconcile script).
 
     res.status(201).json({
       candidate,
@@ -168,38 +182,45 @@ export const screenFromApplication = async (req, res) => {
       aiResult = await screenResumeWithAI(application.resumeText, jobDescription)
     }
 
+    if (!aiResult?.ok) {
+      logger.warn('[Resume] Application screening unavailable', {
+        recruiterId: String(req.user._id), applicationId: String(application._id), reason: aiResult?.reason,
+      })
+      return res.status(503).json({
+        message: aiResult?.message || 'AI screening is unavailable right now. No score was recorded.',
+        evaluationUnavailable: true,
+        reason: aiResult?.reason,
+      })
+    }
+
     logger.info('[Resume] Screened from application', {
       applicationId: application._id,
       candidate:     application.candidate.name,
       score:         aiResult.score,
     })
 
-    // Update or create Candidate profile for score tracking
-    let candidate = await Candidate.findOne({
-      email: application.candidate.email,
-      job:   application.job._id,
+    // Update or create the recruiter-owned profile through the scoring service
+    const candidate = await applyResumeResult({
+      jobId:        application.job._id,
+      email:        application.candidate.email,
+      name:         application.candidate.name,
+      recruiterId:  req.user._id,
+      resumeScore:  aiResult.score,
+      resumeFields: {
+        resumeText:     application.resumeText.substring(0, 5000),
+        resumeUrl:      application.resumeUrl,
+        resumePublicId: application.resumePublicId,
+        skills:         aiResult.skills || [],
+        experience:     aiResult.experience || 0,
+        aiSummary:      aiResult.summary || '',
+        strengths:      aiResult.strengths || [],
+        weaknesses:     aiResult.weaknesses || [],
+      },
     })
+
     if (!candidate) {
-      candidate = new Candidate({
-        name:      application.candidate.name,
-        email:     application.candidate.email,
-        job:       application.job._id,
-        createdBy: req.user._id,
-      })
+      return res.status(500).json({ message: 'Could not persist the screening result for this candidate' })
     }
-
-    candidate.resumeText     = application.resumeText.substring(0, 5000)
-    candidate.resumeUrl      = application.resumeUrl
-    candidate.resumePublicId = application.resumePublicId
-    candidate.skills         = aiResult.skills || []
-    candidate.experience     = aiResult.experience || 0
-    candidate.resumeScore    = aiResult.score || 0
-    candidate.aiSummary      = aiResult.summary || ''
-    candidate.strengths      = aiResult.strengths || []
-    candidate.weaknesses     = aiResult.weaknesses || []
-    candidate.totalScore     = aiResult.score || 0
-
-    await candidate.save()
 
     // Store in AI memory (non-blocking)
     storeResumeEvaluation(candidate._id, application.job._id, aiResult).catch(() => {})

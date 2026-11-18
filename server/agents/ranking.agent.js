@@ -7,6 +7,7 @@
 
 import { BaseAgent } from './base.agent.js'
 import { getRankings } from '../services/ranking.service.js'
+import { weightedTotal } from '../services/candidateProfile.service.js'
 import logger from '../config/logger.js'
 
 // Lazy Groq init (shared pattern)
@@ -91,7 +92,8 @@ class RankingAgent extends BaseAgent {
     const comparison = {
       candidateA: this._summarizeCandidate(a.data),
       candidateB: this._summarizeCandidate(b.data),
-      winner: (a.data?.totalScore || 0) >= (b.data?.totalScore || 0) ? 'A' : 'B',
+      // Compare computed composites, never a possibly-stale stored total
+      winner: weightedTotal(a.data || {}) >= weightedTotal(b.data || {}) ? 'A' : 'B',
     }
 
     // Try AI comparison
@@ -112,7 +114,9 @@ class RankingAgent extends BaseAgent {
     if (!candidateResult.success) throw new Error('Candidate not found')
 
     const candidate = candidateResult.data
-    const score = candidate.totalScore || 0
+    // Recompute from the components so a stale stored total cannot change the
+    // recommendation.
+    const score = weightedTotal(candidate)
 
     let recommendation = 'interview'
     if (score >= 80) recommendation = 'hire'
@@ -140,7 +144,7 @@ class RankingAgent extends BaseAgent {
       resumeScore: c?.resumeScore || 0,
       codeScore: c?.codeScore || 0,
       interviewScore: c?.interviewScore || 0,
-      totalScore: c?.totalScore || 0,
+      totalScore: weightedTotal(c || {}),
       skills: c?.skills || [],
     }
   }

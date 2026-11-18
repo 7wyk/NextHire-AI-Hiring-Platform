@@ -1,59 +1,56 @@
 import { useState, useEffect, useRef } from 'react'
-import { Bell, X, Users, Code2, Briefcase, CheckCircle2 } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Bell, X, Users, Code2, CheckCircle2 } from 'lucide-react'
 import { getSocket } from '../services/socket'
 import { useAuthStore } from '../store/authStore'
 
 const EVENT_ICONS = {
-  'new-application':  { icon: Users,       color: 'text-primary-400',  bg: 'bg-primary-500/10'  },
-  'test-submitted':   { icon: Code2,       color: 'text-emerald-400',  bg: 'bg-emerald-500/10'  },
-  'status-updated':   { icon: CheckCircle2, color: 'text-amber-400',   bg: 'bg-amber-500/10'    },
-  'default':          { icon: Bell,        color: 'text-slate-400',    bg: 'bg-surface-700'      },
+  'new-application': Users,
+  'test-submitted':  Code2,
+  'status-updated':  CheckCircle2,
 }
 
 const MAX_NOTIFICATIONS = 20
 
 export default function NotificationBell() {
-  const { token } = useAuthStore()
+  const { user } = useAuthStore()
   const [notifications, setNotifications] = useState([])
-  const [open, setOpen]                   = useState(false)
-  const [unread, setUnread]               = useState(0)
-  const panelRef  = useRef(null)
-  const socketRef = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [unread, setUnread] = useState(0)
+  const panelRef = useRef(null)
 
-  // ── Connect socket + listen ──────────────────────────────────────────────
   useEffect(() => {
-    if (!token) return
+    if (!user) return
 
-    const socket = getSocket(token)
-    socketRef.current = socket
+    // Auth rides on the HttpOnly session cookie, not a token in JS.
+    const socket = getSocket()
 
     const handleNotification = (event, data) => {
       const msg = buildMessage(event, data)
       setNotifications(prev => [
-        { id: Date.now(), event, data, msg, ts: new Date() },
+        { id: `${Date.now()}-${Math.random()}`, event, data, msg, ts: new Date() },
         ...prev.slice(0, MAX_NOTIFICATIONS - 1),
       ])
       setUnread(n => n + 1)
     }
 
-    socket.on('new-application', d => handleNotification('new-application', d))
-    socket.on('test-submitted',  d => handleNotification('test-submitted',  d))
-    socket.on('status-updated',  d => handleNotification('status-updated',  d))
+    const onApplication = d => handleNotification('new-application', d)
+    const onTest = d => handleNotification('test-submitted', d)
+    const onStatus = d => handleNotification('status-updated', d)
+
+    socket.on('new-application', onApplication)
+    socket.on('test-submitted', onTest)
+    socket.on('status-updated', onStatus)
 
     return () => {
-      socket.off('new-application')
-      socket.off('test-submitted')
-      socket.off('status-updated')
+      socket.off('new-application', onApplication)
+      socket.off('test-submitted', onTest)
+      socket.off('status-updated', onStatus)
     }
-  }, [token])
+  }, [user])
 
-  // ── Click-outside to close ───────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target)) {
-        setOpen(false)
-      }
+      if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -64,108 +61,83 @@ export default function NotificationBell() {
     if (!open) setUnread(0)
   }
 
-  const clearAll = () => setNotifications([])
-
   return (
     <div className="relative" ref={panelRef}>
-      {/* Bell button */}
       <button
         id="notification-bell"
         onClick={handleOpen}
-        className="relative w-9 h-9 flex items-center justify-center rounded-xl
-          bg-surface-700 border border-white/[0.07] hover:bg-surface-600 transition-all"
-        aria-label="Notifications"
+        className="relative p-2 rounded-md text-ink-600 hover:text-ink-900 hover:bg-ink-100 transition-colors"
+        aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
       >
-        <Bell size={16} className="text-slate-400" />
+        <Bell size={16} strokeWidth={1.7} />
         {unread > 0 && (
-          <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full
-            text-[10px] font-bold text-white flex items-center justify-center">
+          <span className="absolute top-1 right-1 min-w-[14px] h-[14px] px-[3px] bg-danger-600 rounded-full text-[9px] font-semibold text-white flex items-center justify-center num">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
       </button>
 
-      {/* Dropdown panel */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0,  scale: 1     }}
-            exit={{ opacity: 0,  y: -8,  scale: 0.95  }}
-            transition={{ duration: 0.15 }}
-            className="absolute right-0 top-12 w-80 z-50
-              bg-surface-800 border border-white/[0.08] rounded-2xl shadow-2xl
-              overflow-hidden"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3
-              border-b border-white/[0.06]">
-              <p className="text-white font-semibold text-sm">Notifications</p>
-              {notifications.length > 0 && (
-                <button
-                  onClick={clearAll}
-                  className="text-xs text-slate-400 hover:text-red-400 flex items-center gap-1 transition-colors"
-                >
-                  <X size={12} /> Clear all
-                </button>
-              )}
-            </div>
+      {open && (
+        <div className="absolute right-0 top-11 w-[min(320px,calc(100vw-32px))] z-50 bg-paper border border-line rounded-card shadow-float overflow-hidden animate-rise-in">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-line">
+            <p className="text-[13px] font-semibold text-ink-900">Notifications</p>
+            {notifications.length > 0 && (
+              <button
+                onClick={() => setNotifications([])}
+                className="text-xs text-ink-500 hover:text-ink-800 flex items-center gap-1"
+              >
+                <X size={11} /> Clear
+              </button>
+            )}
+          </div>
 
-            {/* List */}
-            <div className="max-h-80 overflow-y-auto divide-y divide-white/[0.04]">
-              {notifications.length === 0 ? (
-                <div className="py-10 text-center">
-                  <Bell className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                  <p className="text-slate-500 text-sm">No notifications yet</p>
-                </div>
-              ) : (
-                notifications.map(n => {
-                  const cfg = EVENT_ICONS[n.event] || EVENT_ICONS.default
-                  const Icon = cfg.icon
-                  return (
-                    <div key={n.id} className="flex items-start gap-3 px-4 py-3
-                      hover:bg-white/[0.03] transition-colors">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${cfg.bg}`}>
-                        <Icon size={14} className={cfg.color} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-slate-200 text-xs leading-relaxed">{n.msg}</p>
-                        <p className="text-slate-500 text-[10px] mt-0.5">
-                          {formatTime(n.ts)}
-                        </p>
-                      </div>
+          <div className="max-h-[336px] overflow-y-auto">
+            {notifications.length === 0 ? (
+              <div className="py-9 px-4 text-center">
+                <Bell size={16} className="text-ink-300 mx-auto mb-2" strokeWidth={1.5} />
+                <p className="text-[13px] text-ink-500">No notifications yet</p>
+                <p className="text-[11.5px] text-ink-400 mt-0.5">
+                  Applications, submissions and status changes appear here
+                </p>
+              </div>
+            ) : (
+              notifications.map(n => {
+                const Icon = EVENT_ICONS[n.event] || Bell
+                return (
+                  <div key={n.id} className="flex items-start gap-2.5 px-4 py-2.5 border-b border-line last:border-0">
+                    <Icon size={13} className="text-ink-400 mt-0.5 flex-shrink-0" strokeWidth={1.7} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12.5px] text-ink-800 leading-5">{n.msg}</p>
+                      <p className="text-[11px] text-ink-400 num mt-0.5">{formatTime(n.ts)}</p>
                     </div>
-                  )
-                })
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function buildMessage(event, data) {
   switch (event) {
     case 'new-application':
       return `${data.candidateName || 'A candidate'} applied to "${data.jobTitle || 'a job'}"`
     case 'test-submitted':
-      return `${data.candidateName || 'A candidate'} submitted the coding test for "${data.jobTitle || 'a job'}" — Score: ${data.score ?? '?'}%`
+      return `${data.candidateName || 'A candidate'} submitted a coding test for "${data.jobTitle || 'a job'}" · ${data.score ?? '?'}%`
     case 'status-updated':
-      return `Application status updated to "${data.status}" for ${data.candidateName || 'a candidate'}`
+      return `Status moved to ${data.status} for ${data.candidateName || 'a candidate'}`
     default:
       return 'New notification'
   }
 }
 
 function formatTime(date) {
-  const now  = new Date()
-  const diff = Math.floor((now - date) / 1000)
-  if (diff < 60)          return 'Just now'
-  if (diff < 3600)        return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400)       return `${Math.floor(diff / 3600)}h ago`
+  const diff = Math.floor((Date.now() - date) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   return date.toLocaleDateString()
 }

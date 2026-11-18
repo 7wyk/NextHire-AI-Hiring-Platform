@@ -1,25 +1,59 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
 
+/**
+ * API client.
+ *
+ * Authentication lives in HttpOnly cookies set by the API (SEC-04), so no
+ * token is stored in JavaScript or localStorage any more. `withCredentials`
+ * makes the browser send those cookies; a readable `nh_csrf` cookie is echoed
+ * back in `X-CSRF-Token` on mutations (double-submit CSRF protection).
+ *
+ * VITE_API_URL points at the deployed API in production; the Vite proxy and
+ * Vercel rewrite both make `/api` work when it is unset.
+ */
+const baseURL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
-// ── Attach access token to every outgoing request ─────────────────────────
+const readCookie = (name) => {
+  if (typeof document === 'undefined') return null
+  const match = document.cookie
+    .split('; ')
+    .find((row) => row.startsWith(`${name}=`))
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null
+}
+
+const MUTATING = new Set(['post', 'put', 'patch', 'delete'])
+
 api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().token
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  const method = (config.method || 'get').toLowerCase()
+  if (MUTATING.has(method)) {
+    const csrf = readCookie('nh_csrf')
+    if (csrf) config.headers['X-CSRF-Token'] = csrf
+  }
   return config
 })
 
 // ── Auto-refresh on 401 ───────────────────────────────────────────────────
+// The refresh token is an HttpOnly cookie, so this call carries no body.
 let isRefreshing = false
 let failedQueue  = []
 
-const processQueue = (error, token = null) => {
-  failedQueue.forEach((p) => (error ? p.reject(error) : p.resolve(token)))
+const processQueue = (error) => {
+  failedQueue.forEach((p) => (error ? p.reject(error) : p.resolve()))
   failedQueue = []
+}
+
+const clearSession = () => {
+  useAuthStore.getState().logout()
+  if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    window.location.href = '/login'
+  }
 }
 
 api.interceptors.response.use(
@@ -29,43 +63,27 @@ api.interceptors.response.use(
 
     if (
       err.response?.status === 401 &&
+      original &&
       !original._retry &&
-      !original.url?.includes('/auth/refresh')
+      !original.url?.includes('/auth/refresh') &&
+      !original.url?.includes('/auth/login')
     ) {
       if (isRefreshing) {
-        return new Promise((resolve, reject) =>
-          failedQueue.push({ resolve, reject })
-        )
-          .then((token) => {
-            original.headers.Authorization = `Bearer ${token}`
-            return api(original)
-          })
+        return new Promise((resolve, reject) => failedQueue.push({ resolve, reject }))
+          .then(() => api(original))
           .catch((e) => Promise.reject(e))
       }
 
-      original._retry  = true
-      isRefreshing     = true
-
-      const { refreshToken, user, setAuth, logout } = useAuthStore.getState()
-
-      if (!refreshToken) {
-        logout()
-        window.location.href = '/login'
-        return Promise.reject(err)
-      }
+      original._retry = true
+      isRefreshing = true
 
       try {
-        // Use raw axios (not api) to avoid interceptor loop
-        const { data } = await axios.post('/api/auth/refresh', { refreshToken })
-        setAuth(user, data.accessToken, data.refreshToken)
-        api.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`
-        processQueue(null, data.accessToken)
-        original.headers.Authorization = `Bearer ${data.accessToken}`
+        await axios.post(`${baseURL}/auth/refresh`, {}, { withCredentials: true })
+        processQueue(null)
         return api(original)
       } catch (refreshErr) {
-        processQueue(refreshErr, null)
-        logout()
-        window.location.href = '/login'
+        processQueue(refreshErr)
+        clearSession()
         return Promise.reject(refreshErr)
       } finally {
         isRefreshing = false

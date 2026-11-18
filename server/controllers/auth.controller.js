@@ -2,6 +2,10 @@ import jwt from 'jsonwebtoken'
 import crypto from 'crypto'
 import User from '../models/User.js'
 import logger from '../config/logger.js'
+import {
+  setAuthCookies, clearAuthCookies, REFRESH_COOKIE,
+} from '../config/cookies.js'
+import { buildPasswordResetEmail, sendEmail, isEmailConfigured } from '../services/email.service.js'
 
 const MAX_LOGIN_ATTEMPTS = 5
 const LOCK_DURATION_MS   = 15 * 60 * 1000 // 15 minutes
@@ -24,6 +28,28 @@ const generateRefreshToken = (user) =>
 
 const hashToken = (token) =>
   crypto.createHash('sha256').update(token).digest('hex')
+
+/**
+ * Send the token pair to the browser as HttpOnly cookies (XSS cannot read
+ * them) while still returning it in the body for API clients and tests.
+ */
+const sessionResponse = (res, user, { status = 200, accessToken, refreshToken, extra = {} } = {}) => {
+  const csrfToken = crypto.randomBytes(24).toString('hex')
+  setAuthCookies(res, { accessToken, refreshToken, csrfToken })
+
+  return res.status(status).json({
+    tokenTransport: 'cookie',
+    accessToken,
+    refreshToken,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      ...extra,
+    },
+  })
+}
 
 // ── Controllers ────────────────────────────────────────────────────────────
 
@@ -53,11 +79,7 @@ export const register = async (req, res) => {
 
     logger.info('[Auth] New user registered', { userId: user._id, role: user.role })
 
-    res.status(201).json({
-      accessToken,
-      refreshToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
-    })
+    return sessionResponse(res, user, { status: 201, accessToken, refreshToken })
   } catch (err) {
     logger.error('[Auth] Register failed', { error: err.message })
     res.status(500).json({ message: err.message })
@@ -106,11 +128,7 @@ export const login = async (req, res) => {
 
     logger.info('[Auth] User logged in', { userId: user._id, role: user.role })
 
-    res.json({
-      accessToken,
-      refreshToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, company: user.company },
-    })
+    return sessionResponse(res, user, { accessToken, refreshToken, extra: { company: user.company } })
   } catch (err) {
     logger.error('[Auth] Login failed', { error: err.message })
     res.status(500).json({ message: err.message })
@@ -141,11 +159,7 @@ export const candidateRegister = async (req, res) => {
 
     logger.info('[Auth] Candidate registered', { userId: user._id })
 
-    res.status(201).json({
-      accessToken,
-      refreshToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
-    })
+    return sessionResponse(res, user, { status: 201, accessToken, refreshToken })
   } catch (err) {
     logger.error('[Auth] candidateRegister failed', { error: err.message })
     res.status(500).json({ message: err.message })
@@ -174,10 +188,8 @@ export const recruiterRegister = async (req, res) => {
 
     logger.info('[Auth] Recruiter registered', { userId: user._id })
 
-    res.status(201).json({
-      accessToken,
-      refreshToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, company: user.company },
+    return sessionResponse(res, user, {
+      status: 201, accessToken, refreshToken, extra: { company: user.company },
     })
   } catch (err) {
     logger.error('[Auth] recruiterRegister failed', { error: err.message })
@@ -225,11 +237,7 @@ export const candidateLogin = async (req, res) => {
 
     logger.info('[Auth] Candidate logged in', { userId: user._id })
 
-    res.json({
-      accessToken,
-      refreshToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
-    })
+    return sessionResponse(res, user, { accessToken, refreshToken })
   } catch (err) {
     logger.error('[Auth] candidateLogin failed', { error: err.message })
     res.status(500).json({ message: err.message })
@@ -274,11 +282,7 @@ export const recruiterLogin = async (req, res) => {
 
     logger.info('[Auth] Recruiter logged in', { userId: user._id })
 
-    res.json({
-      accessToken,
-      refreshToken,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, company: user.company },
-    })
+    return sessionResponse(res, user, { accessToken, refreshToken, extra: { company: user.company } })
   } catch (err) {
     logger.error('[Auth] recruiterLogin failed', { error: err.message })
     res.status(500).json({ message: err.message })
@@ -288,7 +292,8 @@ export const recruiterLogin = async (req, res) => {
 // POST /api/auth/refresh  — exchange refresh token for new access token
 export const refresh = async (req, res) => {
   try {
-    const { refreshToken } = req.body
+    // Cookie-first: the browser never has to hold the refresh token in JS.
+    const refreshToken = req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE]
     if (!refreshToken) return res.status(400).json({ message: 'Refresh token required' })
 
     // Verify JWT signature + expiry
@@ -313,7 +318,10 @@ export const refresh = async (req, res) => {
 
     logger.info('[Auth] Tokens refreshed', { userId: user._id })
 
-    res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken })
+    const csrfToken = crypto.randomBytes(24).toString('hex')
+    setAuthCookies(res, { accessToken: newAccessToken, refreshToken: newRefreshToken, csrfToken })
+
+    res.json({ tokenTransport: 'cookie', accessToken: newAccessToken, refreshToken: newRefreshToken })
   } catch (err) {
     logger.error('[Auth] Refresh failed', { error: err.message })
     res.status(500).json({ message: err.message })
@@ -323,7 +331,7 @@ export const refresh = async (req, res) => {
 // POST /api/auth/logout  — invalidate refresh token
 export const logout = async (req, res) => {
   try {
-    const { refreshToken } = req.body
+    const refreshToken = req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE]
 
     if (refreshToken) {
       // Revoke the specific refresh token
@@ -334,6 +342,7 @@ export const logout = async (req, res) => {
       }
     }
 
+    clearAuthCookies(res)
     res.json({ message: 'Logged out successfully' })
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -372,12 +381,40 @@ export const forgotPassword = async (req, res) => {
     user.resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
     await user.save({ validateBeforeSave: false })
 
-    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${rawToken}`
+    // The raw token is NEVER logged, printed or returned in a response. A reset
+    // token in the logs is an account takeover for anyone who can read them.
+    // Delivering it requires a mail transport configured through the
+    // environment (SMTP/Resend); until one exists the request is recorded
+    // without the secret and the response stays generic.
+    // Delivery through the configured transport. The raw token only ever
+    // travels inside this email — never in a log line or an API response.
+    const baseUrl = (
+      process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:5173'
+    ).replace(/\/$/, '')
+    const resetUrl = `${baseUrl}/reset-password?token=${rawToken}`
 
-    // Console-log mode (replace with nodemailer/resend in production)
-    logger.info('[Auth] Password reset link generated', { email, resetUrl })
-    console.log('\n🔑 PASSWORD RESET LINK (dev mode):', resetUrl, '\n')
+    const delivery = await sendEmail({
+      to: user.email,
+      ...buildPasswordResetEmail({ name: user.name, resetUrl }),
+    })
 
+    logger.info('[Auth] Password reset requested', {
+      userId: String(user._id),
+      delivered: delivery.ok,
+      reason: delivery.reason,
+    })
+
+    if (!delivery.ok) {
+      logger.warn('[Auth] Reset link could not be delivered', {
+        userId: String(user._id),
+        mailConfigured: isEmailConfigured(),
+        reason: delivery.reason,
+      })
+    }
+
+    // The response stays identical whether or not the address exists, and
+    // whether or not delivery succeeded — no account enumeration, no hint that
+    // an email was silently dropped.
     res.json({ message: 'If that email exists, a reset link has been sent.' })
   } catch (err) {
     logger.error('[Auth] forgotPassword failed', { error: err.message })

@@ -1,7 +1,12 @@
 import Application from '../models/Application.js'
 import Job from '../models/Job.js'
+import CodingTest from '../models/CodingTest.js'
+import Submission from '../models/Submission.js'
 import { extractTextFromFile } from '../services/parser.service.js'
 import { uploadFile } from '../services/cloudinary.service.js'
+import { summariseAssessmentAvailability } from '../services/assessment.service.js'
+import { resolveAttempt } from '../services/codingTestVersioning.service.js'
+import { sendEmail, buildApplicationConfirmationEmail, buildStatusUpdateEmail } from '../services/email.service.js'
 import fs from 'fs'
 import logger from '../config/logger.js'
 
@@ -91,6 +96,17 @@ export const applyToJob = async (req, res) => {
       })
     } catch { /* non-blocking */ }
 
+    // Receipt email. sendEmail() never throws and reports the provider outcome,
+    // so a delivery failure is logged rather than surfaced as success.
+    sendEmail({
+      to: req.user.email,
+      ...buildApplicationConfirmationEmail({
+        candidateName: req.user.name,
+        jobTitle:      job.title,
+        company:       job.company,
+      }),
+    }).catch(() => {})
+
     logger.info('[Application] Created', {
       applicationId: application._id,
       candidate:     req.user.name,
@@ -133,8 +149,43 @@ export const getMyApplications = async (req, res) => {
       Application.countDocuments(filter),
     ])
 
+    // ── Assessment availability — READ ONLY ────────────────────────────────
+    // The client used to call GET /coding-test/:jobId per application, which
+    // started the assessment timer. Availability is now described here, and a
+    // timer only ever starts from an explicit POST .../start.
+    const jobIds = applications.map((a) => a.job?._id).filter(Boolean)
+
+    const [tests, submissions] = await Promise.all([
+      CodingTest.find({ jobId: { $in: jobIds } })
+        .select('jobId questions revision attempts sessions versions'),
+      Submission.find({ userId: req.user._id, jobId: { $in: jobIds } })
+        .select('jobId verdict passRate createdAt'),
+    ])
+
+    const testByJob = new Map(tests.map((t) => [String(t.jobId), t]))
+    const subByJob  = new Map(submissions.map((s) => [String(s.jobId), s]))
+
+    const withAssessment = applications.map((application) => {
+      const plain = application.toObject()
+      const jobId = String(application.job?._id || '')
+      const test  = testByJob.get(jobId)
+      const attempt = test ? resolveAttempt(test, req.user._id) : { startedAt: null, questions: [] }
+
+      return {
+        ...plain,
+        assessment: summariseAssessmentAvailability({
+          hasTest:      Boolean(test),
+          questions:    attempt.questions,
+          startedAt:    attempt.startedAt,
+          submitted:    subByJob.get(jobId) || null,
+          jobActive:    application.job?.status === 'active',
+          attemptsUsed: attempt.attemptsUsed,
+        }),
+      }
+    })
+
     res.json({
-      applications,
+      applications: withAssessment,
       total,
       page: Number(page),
       pages: Math.ceil(total / Number(limit)),
@@ -287,6 +338,19 @@ export const updateApplicationStatus = async (req, res) => {
     const updated = await Application.findByIdAndUpdate(req.params.id, update, { new: true })
       .populate('candidate', 'name email')
       .populate('job', 'title company')
+
+    // Tell the candidate their application moved. Non-blocking and never faked:
+    // sendEmail() records the provider's real result.
+    if (updated?.candidate?.email) {
+      sendEmail({
+        to: updated.candidate.email,
+        ...buildStatusUpdateEmail({
+          candidateName: updated.candidate.name,
+          jobTitle:      updated.job?.title,
+          status,
+        }),
+      }).catch(() => {})
+    }
 
     res.json({ application: updated })
   } catch (err) {

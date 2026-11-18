@@ -15,7 +15,9 @@ import Application from '../models/Application.js'
 import Job         from '../models/Job.js'
 import Submission  from '../models/Submission.js'
 import Candidate   from '../models/Candidate.js'
+import InterviewSession from '../models/InterviewSession.js'
 import { getRankings } from '../services/ranking.service.js'
+import { weightedTotal, normaliseEmail } from '../services/candidateProfile.service.js'
 import logger from '../config/logger.js'
 
 // v2 Agent System
@@ -124,18 +126,21 @@ export const getCandidates = async (req, res) => {
         },
       },
 
-      // Join Candidate collection (resume screening data — may not exist)
+      // Join Candidate collection (resume screening data — may not exist).
+      // Profiles are keyed by (job, candidate email) and owned by the recruiter,
+      // so match on email — never on createdBy against the candidate's user id.
       {
         $lookup: {
           from:     'candidates',
-          let:      { uid: '$_id' },
+          let:      { email: '$user.email', jids: '$jobIds' },
           pipeline: [
             {
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: ['$createdBy', null] },
-                    { $eq: [{ $toObjectId: '$createdBy' }, '$$uid'] },
+                    { $ne: ['$email', null] },
+                    { $eq: [{ $toLower: '$email' }, { $toLower: '$$email' }] },
+                    { $in: ['$job', '$$jids'] },
                   ],
                 },
               },
@@ -144,6 +149,29 @@ export const getCandidates = async (req, res) => {
             { $limit: 1 },
           ],
           as: 'candidateProfile',
+        },
+      },
+
+      // Join InterviewSession — the source of truth for interview state
+      {
+        $lookup: {
+          from:     'interviewsessions',
+          let:      { uid: '$_id', jids: '$jobIds' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$candidate', '$$uid'] },
+                    { $eq: ['$initiatedBy', 'candidate'] },
+                    { $in: ['$job', '$$jids'] },
+                  ],
+                },
+              },
+            },
+            { $project: { completed: 1, finalScore: 1, evaluationStatus: 1 } },
+          ],
+          as: 'interviewSessions',
         },
       },
 
@@ -167,9 +195,73 @@ export const getCandidates = async (req, res) => {
           resumeScore: {
             $ifNull: [{ $arrayElemAt: ['$candidateProfile.resumeScore', 0] }, 0],
           },
-          interviewScore: {
+          // Interview fields are resolved in the $addFields stages below
+          profileInterviewScore: {
             $ifNull: [{ $arrayElemAt: ['$candidateProfile.interviewScore', 0] }, 0],
           },
+          hasAnyInterview: { $gt: [{ $size: '$interviewSessions' }, 0] },
+          // A completed session only counts as evaluated when the AI actually
+          // produced a result. Legacy sessions (no status) count when they hold
+          // a genuine non-zero score.
+          hasEvaluatedInterview: {
+            $anyElementTrue: [
+              {
+                $map: {
+                  input: '$interviewSessions',
+                  as: 's',
+                  in: {
+                    $and: [
+                      { $eq: ['$$s.completed', true] },
+                      {
+                        $or: [
+                          { $eq: ['$$s.evaluationStatus', 'evaluated'] },
+                          {
+                            $and: [
+                              { $ne: ['$$s.evaluationStatus', 'unavailable'] },
+                              { $gt: [{ $ifNull: ['$$s.finalScore', 0] }, 0] },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          hasCompletedInterview: {
+            $anyElementTrue: [
+              {
+                $map: {
+                  input: '$interviewSessions',
+                  as: 's',
+                  in: { $eq: ['$$s.completed', true] },
+                },
+              },
+            ],
+          },
+          completedInterviewScore: {
+            $reduce: {
+              input: {
+                $filter: {
+                  input: '$interviewSessions',
+                  as: 's',
+                  cond: { $eq: ['$$s.completed', true] },
+                },
+              },
+              initialValue: null,
+              in: {
+                $max: [
+                  { $ifNull: ['$$value', -1] },
+                  { $ifNull: ['$$this.finalScore', 0] },
+                ],
+              },
+            },
+          },
+
+          // Presence flags, so a missing assessment is never shown as a zero
+          hasSubmission:       { $gt: [{ $size: '$bestSubmission' }, 0] },
+          hasCandidateProfile: { $gt: [{ $size: '$candidateProfile' }, 0] },
 
           // Submission metadata
           codingVerdict: { $arrayElemAt: ['$bestSubmission.verdict', 0] },
@@ -177,20 +269,78 @@ export const getCandidates = async (req, res) => {
         },
       },
 
+      // Resolve interview state: a completed session wins, then an in-progress
+      // one, then a legacy score written straight onto the profile.
+      {
+        $addFields: {
+          interviewStatus: {
+            $cond: [
+              '$hasEvaluatedInterview',
+              'completed',
+              {
+                $cond: [
+                  '$hasCompletedInterview',
+                  'unavailable',
+                  {
+                    $cond: [
+                      '$hasAnyInterview',
+                      'in_progress',
+                      {
+                        $cond: [
+                          { $gt: ['$profileInterviewScore', 0] },
+                          'completed',
+                          'not_started',
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          interviewScore: {
+            $cond: [
+              '$hasEvaluatedInterview',
+              { $ifNull: ['$completedInterviewScore', 0] },
+              {
+                $cond: [
+                  '$hasCompletedInterview',
+                  0,
+                  '$profileInterviewScore',
+                ],
+              },
+            ],
+          },
+        },
+      },
+
+      // Assessment status: "not taken" must stay distinct from a genuine zero
+      {
+        $addFields: {
+          resumeStatus: { $cond: ['$hasCandidateProfile', 'completed', 'not_evaluated'] },
+          codingStatus: { $cond: ['$hasSubmission', 'completed', 'not_taken'] },
+        },
+      },
+
       // Compute weighted totalScore
       {
         $addFields: {
+          // Math.round semantics. MongoDB's $round is half-to-even, which gave
+          // 22 for 22.5 while the scoring service and the UI showed 23 — the
+          // same candidate must never show two different totals.
           totalScore: {
-            $round: [
-              {
-                $add: [
-                  { $multiply: ['$resumeScore', 0.3] },
-                  { $multiply: ['$codeScore', 0.4] },
-                  { $multiply: ['$interviewScore', 0.3] },
-                ],
-              },
-              0,
-            ],
+            $floor: {
+              $add: [
+                {
+                  $add: [
+                    { $multiply: ['$resumeScore', 0.3] },
+                    { $multiply: ['$codeScore', 0.4] },
+                    { $multiply: ['$interviewScore', 0.3] },
+                  ],
+                },
+                0.5,
+              ],
+            },
           },
         },
       },
@@ -295,15 +445,48 @@ export const getCandidate = async (req, res) => {
       jobId:  { $in: jobIds },
     }).sort({ passRate: -1 }).lean()
 
-    // Candidate profile (from resume screening)
+    // Candidate profile — recruiter-owned, keyed by candidate email + job
     const profile = await Candidate.findOne({
-      createdBy: candidateUserId,
+      email: user.email,
+      job: { $in: jobIds },
     }).sort({ resumeScore: -1 }).lean()
 
-    const codeScore      = bestSub?.passRate || 0
-    const resumeScore    = profile?.resumeScore || 0
-    const interviewScore = profile?.interviewScore || 0
-    const totalScore     = Math.round(resumeScore * 0.3 + codeScore * 0.4 + interviewScore * 0.3)
+    // Interview state, from the sessions themselves
+    const sessions = await InterviewSession.find({
+      candidate: candidateUserId,
+      job: { $in: jobIds },
+      initiatedBy: 'candidate',
+    }).select('completed finalScore evaluationStatus').lean()
+
+    // A completed session is only a *scored* interview when the AI evaluated it.
+    // Legacy sessions (no status) count when they hold a genuine non-zero score.
+    const isEvaluated = (s) =>
+      s.completed && (
+        s.evaluationStatus === 'evaluated' ||
+        (s.evaluationStatus !== 'unavailable' && (Number(s.finalScore) || 0) > 0)
+      )
+
+    const evaluatedSessions = sessions.filter(isEvaluated)
+    const completedSessions = sessions.filter(s => s.completed)
+
+    const interviewStatus = evaluatedSessions.length > 0
+      ? 'completed'
+      : completedSessions.length > 0
+        ? 'unavailable'
+        : sessions.length > 0
+          ? 'in_progress'
+          : ((profile?.interviewScore || 0) > 0 ? 'completed' : 'not_started')
+
+    const interviewScore = evaluatedSessions.length > 0
+      ? Math.max(...evaluatedSessions.map(s => Number(s.finalScore) || 0))
+      : (completedSessions.length > 0 ? 0 : (profile?.interviewScore || 0))
+
+    const codeScore   = bestSub?.passRate || 0
+    const resumeScore = profile?.resumeScore || 0
+    const totalScore  = weightedTotal({ resumeScore, codeScore, interviewScore })
+
+    const resumeStatus = profile ? 'completed' : 'not_evaluated'
+    const codingStatus = bestSub ? 'completed' : 'not_taken'
 
     // Enrich with AI evaluation history (v2 memory)
     let aiHistory = []
@@ -323,6 +506,9 @@ export const getCandidate = async (req, res) => {
         resumeScore,
         codeScore,
         interviewScore,
+        interviewStatus,
+        resumeStatus,
+        codingStatus,
         totalScore,
         codingVerdict:     bestSub?.verdict || null,
         aiFeedback:        bestSub?.aiFeedback || null,
@@ -366,11 +552,19 @@ export const updateStatus = async (req, res) => {
 
     if (!app) return res.status(404).json({ message: 'Application not found' })
 
-    // Also update Candidate doc if it exists (keep in sync)
-    await Candidate.updateMany(
-      { createdBy: candidateUserId },
-      { status },
-    )
+    // The candidate's user document is needed before it is referenced. It used
+    // to be read *after* this block, which threw a ReferenceError after the
+    // application had already been updated (DB changed, HTTP 500 returned).
+    const User = mongoose.model('User')
+    const user = await User.findById(candidateUserId).select('name email').lean()
+
+    // Keep the recruiter-owned profile in sync. Profiles are keyed by
+    // (email, job) — `createdBy` holds the recruiter, never the candidate.
+    if (user?.email) {
+      const profileFilter = { email: normaliseEmail(user.email) }
+      profileFilter.job = jobId ? new ObjectId(jobId) : { $in: jobIds }
+      await Candidate.updateMany(profileFilter, { status })
+    }
 
     // v2: Store hiring decision in recruiter memory (non-blocking)
     storeHiringDecision(recruiterId, candidateUserId, jobId || jobIds[0], {
@@ -378,10 +572,6 @@ export const updateStatus = async (req, res) => {
       candidateName: user?.name || '',
       jobTitle: app.job?.title || '',
     }).catch(() => {})
-
-    // Build response in the same shape as getCandidates rows
-    const User = mongoose.model('User')
-    const user = await User.findById(candidateUserId).select('name email').lean()
 
     res.json({
       candidate: {

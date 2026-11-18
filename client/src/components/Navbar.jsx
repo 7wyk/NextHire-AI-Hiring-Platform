@@ -1,77 +1,56 @@
-import { Search, LogOut } from 'lucide-react'
+import { Menu, LogOut } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { disconnectSocket } from '../services/socket'
 import NotificationBell from './NotificationBell'
 
-const pageTitles = {
-  '/dashboard':        'Dashboard',
-  '/jobs':             'Job Listings',
-  '/candidates':       'Candidates',
-  '/resume-ai':        'Resume AI Screening',
-  '/coding':           'Coding Assessment',
-  '/ranking':          'Candidate Rankings',
-  '/my-applications':  'My Applications',
-  '/public-jobs':      'Browse Jobs',
-  '/ai-interview':     'AI Interview',
-}
-
-export default function Navbar() {
+export default function Navbar({ onMenuClick }) {
   const { user, logout } = useAuthStore()
-  const { pathname }     = useLocation()
-  const navigate         = useNavigate()
+  const navigate = useNavigate()
+  const isRecruiter = user?.role === 'recruiter' || user?.role === 'admin'
 
   const handleLogout = () => {
-    disconnectSocket()   // cleanly close Socket.IO connection
+    disconnectSocket()
     logout()
-    navigate('/login')
+    navigate('/')
   }
 
   return (
-    <header className="h-16 flex items-center justify-between px-6 bg-surface-800/80 backdrop-blur-sm border-b border-white/[0.07] flex-shrink-0">
-      <h1 className="text-lg font-semibold text-white">
-        {pageTitles[pathname] || 'NextHire AI'}
-      </h1>
+    <header className="h-14 flex items-center justify-between gap-3 px-4 sm:px-6 bg-paper border-b border-line flex-shrink-0">
+      <div className="flex items-center gap-2 min-w-0">
+        <button
+          onClick={onMenuClick}
+          className="lg:hidden -ml-1 p-2 rounded-[7px] text-ink-600 hover:bg-ink-100 hover:text-ink-950"
+          aria-label="Open navigation"
+        >
+          <Menu size={18} strokeWidth={1.7} />
+        </button>
+        <span className="text-[13px] text-ink-500 truncate">
+          {isRecruiter ? 'Recruiter workspace' : 'Candidate workspace'}
+        </span>
+      </div>
 
-      <div className="flex items-center gap-3">
-        {/* Search */}
-        <div className="relative hidden md:block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4" />
-          <input
-            type="text"
-            placeholder="Search..."
-            className="pl-9 pr-4 py-2 rounded-xl bg-surface-700 border border-white/10
-              text-slate-300 placeholder-slate-500 text-sm focus:outline-none
-              focus:border-primary-500/40 w-52 transition-all"
-          />
-        </div>
+      <div className="flex items-center gap-1.5">
+        {isRecruiter && <NotificationBell />}
 
-        {/* Notification Bell — recruiters only */}
-        {(user?.role === 'recruiter' || user?.role === 'admin') && (
-          <NotificationBell />
-        )}
-
-        {/* Avatar + name */}
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500
-            flex items-center justify-center text-white text-sm font-bold cursor-pointer">
+        <div className="hidden sm:flex items-center gap-2 pl-3 ml-1.5 border-l border-line">
+          <div className="w-7 h-7 rounded-[6px] bg-ink-100 text-ink-700 flex items-center justify-center text-[12px] font-medium">
             {user?.name?.[0]?.toUpperCase() || 'U'}
           </div>
-          <span className="hidden md:block text-slate-300 text-sm font-medium max-w-[100px] truncate">
-            {user?.name}
-          </span>
+          <div className="leading-tight">
+            <p className="text-[12.5px] text-ink-950 max-w-[140px] truncate">{user?.name}</p>
+            <p className="text-[11px] text-ink-500 capitalize">{user?.role}</p>
+          </div>
         </div>
 
-        {/* Logout */}
         <button
           id="logout-btn"
           onClick={handleLogout}
-          title="Logout"
-          className="w-9 h-9 flex items-center justify-center rounded-xl
-            bg-surface-700 border border-white/[0.07] text-slate-400
-            hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all"
+          title="Sign out"
+          aria-label="Sign out"
+          className="ml-1 p-2 rounded-[7px] text-ink-500 hover:text-ink-950 hover:bg-ink-100 transition-colors"
         >
-          <LogOut size={15} />
+          <LogOut size={15} strokeWidth={1.7} />
         </button>
       </div>
     </header>

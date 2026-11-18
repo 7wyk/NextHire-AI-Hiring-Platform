@@ -74,12 +74,15 @@ class InterviewAgent extends BaseAgent {
     const { jobTitle, messages } = task
     const summary = await generateInterviewSummary({ jobTitle, messages })
 
-    // Persist interview score if candidate info is available
-    if (task.userId && task.jobId && summary.overall) {
+    // Persist the interview score only when the model actually evaluated it.
+    // A genuine 0 is a real score and must be saved — truthiness checks dropped
+    // it, while an unavailable evaluation must never be written as 0.
+    const overall = summary?.ok ? Number(summary.overall) : NaN
+    if (task.userId && task.jobId && Number.isFinite(overall)) {
       this.useTool('mongodb.saveScore', {
         userId: task.userId,
         jobId: task.jobId,
-        interviewScore: summary.overall,
+        interviewScore: overall,
       }).catch(() => {})
     }
 

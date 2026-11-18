@@ -1,22 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
 import Editor from '@monaco-editor/react'
 import {
-  Clock, ChevronLeft, ChevronRight, Send,
-  CheckCircle2, AlertCircle, Code2, Loader2,
-  Play, XCircle
+  Clock, ChevronLeft, ChevronRight, Send, CheckCircle2,
+  AlertCircle, Code2, Loader2, Play, XCircle,
 } from 'lucide-react'
 import api from '../../services/api'
 import toast from 'react-hot-toast'
+import { LoadingBlock } from '../../components/ui'
 
-// ── Timer Component (server-anchored) ────────────────────────────────────────
+/* ── Timer ──────────────────────────────────────────────────────────────── */
+
 function CountdownTimer({ totalSecs, onExpire }) {
   const [remaining, setRemaining] = useState(totalSecs)
 
-  useEffect(() => {
-    setRemaining(totalSecs)
-  }, [totalSecs])
+  useEffect(() => { setRemaining(totalSecs) }, [totalSecs])
 
   useEffect(() => {
     if (remaining <= 0) { onExpire(); return }
@@ -29,87 +27,48 @@ function CountdownTimer({ totalSecs, onExpire }) {
   const urgent = remaining < 120
 
   return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl font-mono text-sm font-bold
-      ${urgent
-        ? 'bg-red-500/15 text-red-400 border border-red-500/30 animate-pulse'
-        : 'bg-surface-700 text-slate-300 border border-white/10'
+    <div
+      className={`flex items-center gap-1.5 h-7 px-2.5 rounded-md border num text-[12.5px] ${
+        urgent
+          ? 'border-danger-100 bg-danger-50 text-danger-700'
+          : 'border-line bg-white text-ink-700'
       }`}
     >
-      <Clock size={14} className={urgent ? 'text-red-400' : 'text-slate-400'} />
-      {m}:{s} remaining
+      <Clock size={12} strokeWidth={1.8} />
+      {m}:{s}
+      <span className="text-ink-400 font-sans">left</span>
     </div>
   )
 }
 
-// ── Difficulty badge colors ──────────────────────────────────────────────────
-const difficultyColors = {
-  easy:   'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  medium: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  hard:   'bg-red-500/15 text-red-300 border-red-500/30',
+const DIFFICULTY = {
+  easy: 'positive',
+  medium: 'warn',
+  hard: 'danger',
 }
 
 export default function CodingTestPage() {
   const { jobId } = useParams()
-  const navigate  = useNavigate()
+  const navigate = useNavigate()
 
-  const [test, setTest]                       = useState(null)
-  const [loading, setLoading]                 = useState(true)
-  const [currentIdx, setCurrentIdx]           = useState(0)
-  const [answers, setAnswers]                 = useState([])
-  const [submitting, setSubmitting]           = useState(false)
-  const [result, setResult]                   = useState(null)
+  const [test, setTest] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [currentIdx, setCurrentIdx] = useState(0)
+  const [answers, setAnswers] = useState([])
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState(null)
   const [totalRemainingSecs, setTotalRemainingSecs] = useState(0)
-  const [timeExpired, setTimeExpired]         = useState(false)
-
-  // Run Code state
-  const [running, setRunning]                 = useState(false)
-  const [runResults, setRunResults]           = useState({}) // { [questionIndex]: { results, passed, total, allPassed } }
+  const [timeExpired, setTimeExpired] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [runResults, setRunResults] = useState({})
+  // Which runtimes this server can actually execute. Languages the server
+  // cannot run are disabled instead of silently scoring zero.
+  const [runtimes, setRuntimes] = useState({ javascript: 'sandbox', judge0: false })
+  // The timer is server-side and only starts when the candidate presses Start.
+  const [started, setStarted] = useState(false)
+  const [starting, setStarting] = useState(false)
 
   const editorRef = useRef(null)
-
-  // ── Fetch the test and record start time on server ─────────────────────────
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const { data } = await api.get(`/coding-test/${jobId}`)
-        const t = data.test
-        setTest(t)
-
-        const totalTimeLimitSecs = t.questions.reduce(
-          (sum, q) => sum + (q.timeLimit || 15) * 60, 0
-        )
-        const elapsed = t.startTime
-          ? Math.floor((Date.now() - new Date(t.startTime).getTime()) / 1000)
-          : 0
-        const remaining = Math.max(0, totalTimeLimitSecs - elapsed)
-        setTotalRemainingSecs(remaining)
-        if (remaining <= 0) setTimeExpired(true)
-
-        setAnswers(t.questions.map((_, i) => ({
-          questionIndex: i,
-          code: getStarterCode('javascript'),
-          language: 'javascript',
-        })))
-      } catch (err) {
-        const errData = err.response?.data
-        // Already submitted — show their existing result
-        if (errData?.alreadySubmitted) {
-          setResult({
-            verdict:      errData.submission?.verdict || 'Submitted',
-            overallScore: errData.submission?.passRate || 0,
-            testResults:  [],
-            alreadySubmitted: true,
-          })
-          return
-        }
-        toast.error(errData?.message || 'Failed to load test')
-        navigate('/my-applications')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [jobId, navigate])
 
   const getStarterCode = (lang) => {
     const starters = {
@@ -121,11 +80,56 @@ export default function CodingTestPage() {
     return starters[lang] || starters.javascript
   }
 
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const { data } = await api.get(`/coding-test/${jobId}`)
+        const t = data.test
+        setTest(t)
+        if (t.runtimes) setRuntimes(t.runtimes)
+
+        const totalTimeLimitSecs = t.questions.reduce(
+          (sum, q) => sum + (q.timeLimit || 15) * 60, 0
+        )
+        // A started attempt resumes from the server's clock; an unstarted one
+        // shows the full budget and waits for an explicit start.
+        const elapsed = t.startTime
+          ? Math.floor((Date.now() - new Date(t.startTime).getTime()) / 1000)
+          : 0
+        const remaining = Math.max(0, totalTimeLimitSecs - elapsed)
+        setTotalRemainingSecs(remaining)
+        setStarted(Boolean(t.started))
+        if (t.started && remaining <= 0) setTimeExpired(true)
+
+        setAnswers(t.questions.map((_, i) => ({
+          questionIndex: i,
+          code: getStarterCode('javascript'),
+          language: 'javascript',
+        })))
+      } catch (err) {
+        const errData = err.response?.data
+        if (errData?.alreadySubmitted) {
+          setResult({
+            verdict: errData.submission?.verdict || 'Submitted',
+            overallScore: errData.submission?.passRate || 0,
+            testResults: [],
+            alreadySubmitted: true,
+          })
+          return
+        }
+        toast.error(errData?.message || 'Could not load the test')
+        navigate('/my-applications')
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [jobId, navigate])
+
   const handleLanguageChange = (lang) => {
     setAnswers(prev => prev.map((a, i) =>
       i === currentIdx ? { ...a, language: lang, code: getStarterCode(lang) } : a
     ))
-    // Clear run results for this question when language changes
     setRunResults(prev => { const n = { ...prev }; delete n[currentIdx]; return n })
   }
 
@@ -135,23 +139,53 @@ export default function CodingTestPage() {
     ))
   }, [currentIdx])
 
-  // ── Timer expire ───────────────────────────────────────────────────────────
   const handleTimerExpire = useCallback(() => {
     setTimeExpired(true)
-    toast.error('Total time is up! Auto-submitting…', { icon: '⏰', duration: 4000 })
+    toast.error('Time is up. Submitting your answers.')
     setSubmitting(true)
     api.post('/coding-test/submit', { jobId, answers })
-      .then(({ data }) => { setResult(data) })
-      .catch(() => toast.error('Auto-submit failed — please refresh and try again'))
+      .then(({ data }) => setResult(data))
+      .catch(() => toast.error('Automatic submission failed. Refresh and submit manually.'))
       .finally(() => setSubmitting(false))
   }, [jobId, answers])
 
-  // ── Run Code (no save) ─────────────────────────────────────────────────────
+  const handleStartAssessment = async () => {
+    setStarting(true)
+    try {
+      // Idempotent: a reload resumes the original start time rather than
+      // resetting the clock.
+      const { data } = await api.post(`/coding-test/${jobId}/start`)
+      const totalTimeLimitSecs = (test?.questions || []).reduce(
+        (sum, q) => sum + (q.timeLimit || 15) * 60, 0
+      )
+      const elapsed = data.startTime
+        ? Math.floor((Date.now() - new Date(data.startTime).getTime()) / 1000)
+        : 0
+      setTotalRemainingSecs(Math.max(0, totalTimeLimitSecs - elapsed))
+      setStarted(true)
+      if (data.resumed) toast.success('Resumed — your original timer is still running')
+    } catch (err) {
+      const errData = err.response?.data
+      if (errData?.alreadySubmitted) {
+        setResult({
+          verdict: errData.submission?.verdict || 'Submitted',
+          overallScore: errData.submission?.passRate || 0,
+          testResults: [],
+          alreadySubmitted: true,
+        })
+        return
+      }
+      toast.error(errData?.message || 'Could not start the assessment')
+    } finally {
+      setStarting(false)
+    }
+  }
+
   const handleRunCode = async () => {
     if (timeExpired) return
     const currentAnswer = answers[currentIdx]
     if (!currentAnswer?.code?.trim()) {
-      toast.error('Write some code before running!')
+      toast.error('Write some code before running')
       return
     }
 
@@ -164,25 +198,23 @@ export default function CodingTestPage() {
         language: currentAnswer.language,
       })
       setRunResults(prev => ({ ...prev, [currentIdx]: data }))
-
-      if (data.allPassed) {
-        toast.success(`All ${data.total} test cases passed!`, { icon: '🎉' })
-      } else {
-        toast(`${data.passed}/${data.total} test cases passed`, { icon: '🧪' })
-      }
+      if (data.allPassed) toast.success(`All ${data.total} test cases passed`)
+      else toast(`${data.passed}/${data.total} test cases passed`)
     } catch (err) {
-      if (err.response?.data?.timeExpired) {
+      const errData = err.response?.data
+      if (errData?.timeExpired) {
         setTimeExpired(true)
-        toast.error('Time expired!')
+        toast.error('Time expired')
+      } else if (errData?.executionUnavailable) {
+        toast.error(errData.message || 'Code execution is unavailable right now.')
       } else {
-        toast.error(err.response?.data?.message || 'Execution failed')
+        toast.error(errData?.message || 'Execution failed')
       }
     } finally {
       setRunning(false)
     }
   }
 
-  // ── Final Submit ───────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (timeExpired) return
     if (!window.confirm('Submit all answers? This cannot be undone.')) return
@@ -190,115 +222,153 @@ export default function CodingTestPage() {
     try {
       const { data } = await api.post('/coding-test/submit', { jobId, answers })
       setResult(data)
-      toast.success('Test submitted successfully!')
+      toast.success('Test submitted')
     } catch (err) {
-      if (err.response?.data?.timeExpired) {
+      const errData = err.response?.data
+      if (errData?.timeExpired) {
         setTimeExpired(true)
-        toast.error('Time expired — submission rejected')
+        toast.error('Time expired. Submission rejected.')
+      } else if (errData?.executionUnavailable) {
+        // Nothing was submitted or scored; the attempt is preserved.
+        toast.error(errData.message || 'Code execution is unavailable right now. Nothing was submitted.')
       } else {
-        toast.error(err.response?.data?.message || 'Submission failed')
+        toast.error(errData?.message || 'Submission failed')
       }
     } finally {
       setSubmitting(false)
     }
   }
 
-  // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
+    return <div className="card"><LoadingBlock label="Loading assessment" /></div>
+  }
+
+  /* ── Start gate ─────────────────────────────────────────────────────── */
+  if (!started && !result && test) {
+    const totalMinutes = test.questions.reduce((sum, q) => sum + (q.timeLimit || 15), 0)
+
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-primary-400" />
+      <div className="max-w-2xl mx-auto animate-fade-in">
+        <div className="card p-6">
+          <h1 className="text-[17px] font-semibold text-ink-900">{test.role} assessment</h1>
+          <p className="text-[13px] text-ink-500 mt-1">
+            {test.questions.length} question{test.questions.length === 1 ? '' : 's'} ·{' '}
+            <span className="num">{totalMinutes} minutes</span> · {test.difficulty}
+          </p>
+
+          <div className="mt-4 rounded-lg border border-line bg-surface-50 px-4 py-3 text-[12.5px] text-ink-600 leading-relaxed">
+            The timer starts when you press <strong>Start assessment</strong> and keeps running
+            if you reload the page or close the tab. You can run your code against the sample
+            tests as often as you like.
+          </div>
+
+          <div className="mt-5 flex items-center gap-3">
+            <button
+              onClick={handleStartAssessment}
+              disabled={starting}
+              className="btn-primary"
+            >
+              {starting ? 'Starting…' : 'Start assessment'}
+              <Play size={13} />
+            </button>
+            <button onClick={() => navigate('/my-applications')} className="btn-secondary">
+              Not now
+            </button>
+          </div>
+        </div>
       </div>
     )
   }
 
-  // ── Result screen (post-submission) ────────────────────────────────────────
+  /* ── Result ─────────────────────────────────────────────────────────── */
   if (result) {
-    const passed   = result.verdict === 'Accepted'
-    const partial  = result.verdict === 'Partial'
-    const ai       = result.aiFeedback
+    const passed = result.verdict === 'Accepted'
+    const partial = result.verdict === 'Partial'
+    const ai = result.aiFeedback
 
     return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="max-w-2xl mx-auto space-y-4 py-4"
-      >
-        {/* Verdict card */}
-        <div className="card text-center py-8">
-          <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4
-            ${passed ? 'bg-emerald-500/15' : partial ? 'bg-amber-500/15' : 'bg-red-500/15'}`}>
-            {passed
-              ? <CheckCircle2 className="w-10 h-10 text-emerald-400" />
-              : <AlertCircle  className="w-10 h-10 text-amber-400" />}
+      <div className="max-w-2xl mx-auto animate-fade-in">
+        <div className="card p-6">
+          <div className="flex items-start gap-4">
+            <span className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              passed ? 'bg-positive-50 text-positive-600'
+              : partial ? 'bg-warn-50 text-warn-600'
+              : 'bg-danger-50 text-danger-600'
+            }`}>
+              {passed
+                ? <CheckCircle2 size={17} strokeWidth={1.7} />
+                : <AlertCircle size={17} strokeWidth={1.7} />}
+            </span>
+            <div className="flex-1">
+              <p className="text-[11.5px] text-ink-500">Assessment submitted</p>
+              <h1 className="text-[19px] font-semibold text-ink-900 mt-0.5">{result.verdict}</h1>
+              <p className="text-[13px] text-ink-500 mt-1">
+                Overall score <span className="num text-ink-900">{result.overallScore}%</span>
+              </p>
+              {result.alreadySubmitted && (
+                <p className="text-[12px] text-warn-600 mt-2">
+                  You had already submitted this assessment. This is the recorded result.
+                </p>
+              )}
+            </div>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-1">{result.verdict}</h2>
-          <p className="text-slate-400 mb-1">Overall score: <span className="text-white font-bold text-xl">{result.overallScore}%</span></p>
-          {result.alreadySubmitted && (
-            <p className="text-amber-400 text-xs mt-2 bg-amber-500/10 px-3 py-1.5 rounded-lg inline-block">
-              ⚠️ You had already submitted this test
-            </p>
-          )}
         </div>
 
-        {/* Per-question breakdown */}
         {(result.testResults || []).length > 0 && (
-          <div className="card">
-            <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest mb-3">Question Breakdown</p>
-            <div className="grid grid-cols-3 gap-3">
-              {result.testResults.map((r, i) => (
-                <div key={i} className="bg-surface-700 rounded-xl p-3 border border-white/[0.06] text-center">
-                  <p className="text-slate-400 text-xs mb-1">Q{i + 1}</p>
-                  <p className={`font-bold text-xl ${
-                    r.score === 100 ? 'text-emerald-400' :
-                    r.score >= 50   ? 'text-amber-400'   : 'text-red-400'}`}>{r.score}%</p>
-                  <p className="text-slate-500 text-xs">{r.passed}/{r.total} passed</p>
-                </div>
-              ))}
-            </div>
+          <div className="card mt-4 overflow-hidden">
+            <p className="px-5 py-3 border-b border-line text-[12.5px] font-medium text-ink-900">
+              Per-question score
+            </p>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th className="th">Question</th>
+                  <th className="th">Score</th>
+                  <th className="th">Cases passed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.testResults.map((r, i) => (
+                  <tr key={i}>
+                    <td className="td num text-ink-600">Q{i + 1}</td>
+                    <td className="td num text-ink-900">{r.score}%</td>
+                    <td className="td num text-ink-600">{r.passed}/{r.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
-        {/* AI Feedback panel */}
         {ai && (
-          <div className="card border border-primary-500/20 bg-primary-500/[0.03]">
-            <div className="flex items-center gap-2 mb-4">
-              <Code2 size={16} className="text-primary-400" />
-              <p className="text-white font-semibold text-sm">AI Code Review</p>
-              <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-lg ${
-                ai.codeQuality === 'excellent' ? 'bg-emerald-500/10 text-emerald-400' :
-                ai.codeQuality === 'good'      ? 'bg-blue-500/10    text-blue-400'    :
-                ai.codeQuality === 'fair'      ? 'bg-amber-500/10   text-amber-400'   :
-                'bg-red-500/10 text-red-400'}`}>
-                {ai.codeQuality?.charAt(0).toUpperCase() + ai.codeQuality?.slice(1)}
-              </span>
+          <div className="card mt-4 p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-[12.5px] font-medium text-ink-900">AI code review</p>
+              <span className="pill-neutral capitalize">{ai.codeQuality}</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="bg-surface-700 rounded-xl p-3">
-                <p className="text-slate-500 text-xs mb-1">Time Complexity</p>
-                <p className="text-white font-mono font-semibold">{ai.timeComplexity || 'N/A'}</p>
+            <dl className="grid grid-cols-2 gap-2 mt-3">
+              <div className="surface-inset px-3 py-2">
+                <dt className="text-[10.5px] text-ink-500">Time complexity</dt>
+                <dd className="num text-[12.5px] text-ink-800 mt-0.5">{ai.timeComplexity || 'N/A'}</dd>
               </div>
-              <div className="bg-surface-700 rounded-xl p-3">
-                <p className="text-slate-500 text-xs mb-1">Space Complexity</p>
-                <p className="text-white font-mono font-semibold">{ai.spaceComplexity || 'N/A'}</p>
+              <div className="surface-inset px-3 py-2">
+                <dt className="text-[10.5px] text-ink-500">Space complexity</dt>
+                <dd className="num text-[12.5px] text-ink-800 mt-0.5">{ai.spaceComplexity || 'N/A'}</dd>
               </div>
-            </div>
+            </dl>
 
             {ai.feedback && (
-              <p className="text-slate-300 text-sm leading-relaxed mb-4 p-3 bg-surface-700 rounded-xl">
-                {ai.feedback}
-              </p>
+              <p className="text-[12.5px] text-ink-700 leading-6 mt-3">{ai.feedback}</p>
             )}
 
             {ai.improvements?.length > 0 && (
-              <div>
-                <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest mb-2">Suggestions</p>
+              <div className="mt-3 pt-3 border-t border-line">
+                <p className="text-[11.5px] text-ink-500 mb-1.5">Suggestions</p>
                 <ul className="space-y-1.5">
                   {ai.improvements.map((tip, i) => (
-                    <li key={i} className="flex items-start gap-2 text-slate-300 text-sm">
-                      <span className="text-primary-400 mt-0.5 flex-shrink-0">→</span>
-                      {tip}
+                    <li key={i} className="text-[12.5px] text-ink-700 leading-5 flex gap-2">
+                      <span className="text-ink-300">—</span>{tip}
                     </li>
                   ))}
                 </ul>
@@ -307,228 +377,178 @@ export default function CodingTestPage() {
           </div>
         )}
 
-        <button
-          onClick={() => navigate('/my-applications')}
-          className="btn-primary mx-auto"
-        >
-          Back to Applications
+        <button onClick={() => navigate('/my-applications')} className="btn-primary mt-4">
+          Back to applications
         </button>
-      </motion.div>
+      </div>
     )
   }
 
   const q = test.questions[currentIdx]
   const currentAnswer = answers[currentIdx] || { code: '', language: 'javascript' }
-  const isLast        = currentIdx === test.questions.length - 1
+  const isLast = currentIdx === test.questions.length - 1
   const currentRunResult = runResults[currentIdx]
 
   return (
-    <div className="flex flex-col gap-4 h-full animate-fade-in">
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-primary-500/15 border border-primary-500/20 flex items-center justify-center">
-            <Code2 className="w-5 h-5 text-primary-400" />
-          </div>
-          <div>
-            <p className="text-white font-semibold text-sm">{test.role} Assessment</p>
-            <p className="text-slate-500 text-xs">
-              Question {currentIdx + 1} of {test.questions.length}
-            </p>
-          </div>
+    <div className="flex flex-col gap-3 animate-fade-in">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[16px] font-semibold text-ink-900 truncate">
+            {test.role} assessment
+          </h1>
+          <p className="num text-[12px] text-ink-500">
+            Question {currentIdx + 1} of {test.questions.length}
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className={`badge capitalize border ${difficultyColors[test.difficulty] || difficultyColors.medium}`}>
+        <div className="flex items-center gap-2">
+          <span className={`pill-${DIFFICULTY[test.difficulty] || 'warn'} capitalize`}>
             {test.difficulty}
           </span>
-          <CountdownTimer
-            totalSecs={totalRemainingSecs}
-            onExpire={handleTimerExpire}
-          />
+          <CountdownTimer totalSecs={totalRemainingSecs} onExpire={handleTimerExpire} />
         </div>
       </div>
 
-      {/* ── Time expired banner ─────────────────────────────────────────────── */}
       {timeExpired && !result && (
-        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-sm">
-          <AlertCircle size={16} />
-          <span className="font-medium">Time expired — you can no longer run or submit code.</span>
+        <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-danger-50 border border-danger-100 text-[13px] text-danger-700">
+          <AlertCircle size={14} />
+          Time expired. You can no longer run or submit code.
         </div>
       )}
 
-      {/* ── Question tabs ────────────────────────────────────────────────────── */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1">
+      {/* Question tabs */}
+      <div className="flex gap-1 overflow-x-auto pb-0.5">
         {test.questions.map((_, i) => {
-          const hasRun  = runResults[i]
-          const allPass = hasRun?.allPassed
+          const run = runResults[i]
+          const active = i === currentIdx
+          const tone = active
+            ? 'bg-white border-ink-300 text-ink-900'
+            : run?.allPassed
+              ? 'bg-positive-50 border-positive-100 text-positive-700'
+              : run
+                ? 'bg-warn-50 border-warn-100 text-warn-700'
+                : 'bg-transparent border-transparent text-ink-500 hover:bg-ink-100'
           return (
             <button
               key={i}
               onClick={() => setCurrentIdx(i)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex-shrink-0
-                ${i === currentIdx
-                  ? 'bg-primary-500/20 text-primary-300 border border-primary-500/30'
-                  : allPass
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                    : hasRun
-                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                      : answers[i]?.code?.trim().length > 20
-                        ? 'bg-surface-600 text-slate-300 border border-white/10'
-                        : 'bg-surface-700 text-slate-400 border border-white/5 hover:bg-surface-600'
-                }`}
+              className={`h-7 px-2.5 rounded-md border text-[12px] num flex-shrink-0 transition-colors ${tone}`}
+              aria-current={active}
             >
               Q{i + 1}
-              {allPass && <CheckCircle2 size={10} className="inline ml-1" />}
             </button>
           )
         })}
       </div>
 
-      {/* ── Main split: question + editor ─────────────────────────────────── */}
-      <div className="grid lg:grid-cols-2 gap-4 flex-1 min-h-0">
-        {/* Question panel + run results */}
-        <div className="flex flex-col gap-3 overflow-y-auto">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentIdx}
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              className="card"
-            >
-              <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-3">
-                Problem Statement
-              </p>
-              <p className="text-white leading-relaxed mb-5">{q.question}</p>
+      {/* Editor + question */}
+      <div className="grid lg:grid-cols-2 gap-3 flex-1 min-h-0">
+        <div className="flex flex-col gap-3 min-w-0">
+          <div className="card p-5">
+            <p className="text-[11.5px] text-ink-500 mb-2">Problem statement</p>
+            <p className="text-[13px] text-ink-800 leading-6">{q.question}</p>
 
-              {q.sampleInput && (
-                <div className="bg-surface-700 rounded-xl p-3 border border-white/[0.06]">
-                  <p className="text-xs text-slate-500 mb-1.5 font-medium">Sample Input</p>
-                  <code className="text-emerald-300 text-sm font-mono">{q.sampleInput}</code>
-                </div>
-              )}
-            </motion.div>
-          </AnimatePresence>
-
-          {/* ── Run Results Panel ─────────────────────────────────────────── */}
-          <AnimatePresence>
-            {currentRunResult && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                className="card"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold">
-                    Test Results
-                  </p>
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full
-                    ${currentRunResult.allPassed
-                      ? 'bg-emerald-500/15 text-emerald-300'
-                      : 'bg-amber-500/15 text-amber-300'
-                    }`}
-                  >
-                    {currentRunResult.passed}/{currentRunResult.total} passed
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {currentRunResult.results.map((r, i) => (
-                    <div
-                      key={i}
-                      className={`rounded-xl p-3 border text-sm
-                        ${r.passed
-                          ? 'bg-emerald-500/5 border-emerald-500/20'
-                          : 'bg-red-500/5 border-red-500/20'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1.5">
-                        {r.passed
-                          ? <CheckCircle2 size={14} className="text-emerald-400" />
-                          : <XCircle size={14} className="text-red-400" />
-                        }
-                        <span className={`font-semibold text-xs ${r.passed ? 'text-emerald-300' : 'text-red-300'}`}>
-                          Test Case {i + 1}: {r.passed ? 'Passed' : 'Failed'}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 text-xs mt-2">
-                        <div>
-                          <p className="text-slate-500 mb-0.5">Input</p>
-                          <code className="text-slate-300 font-mono break-all">{r.input}</code>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 mb-0.5">Expected</p>
-                          <code className="text-emerald-300 font-mono break-all">{r.expectedOutput}</code>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 mb-0.5">Got</p>
-                          <code className={`font-mono break-all ${r.passed ? 'text-emerald-300' : r.error ? 'text-red-400' : 'text-amber-300'}`}>
-                            {r.actualOutput}
-                          </code>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
+            {q.sampleInput && (
+              <div className="surface-inset px-3 py-2 mt-3">
+                <p className="text-[10.5px] text-ink-500">Sample input</p>
+                <code className="num text-[12.5px] text-ink-800">{q.sampleInput}</code>
+              </div>
             )}
-          </AnimatePresence>
+          </div>
+
+          {currentRunResult && (
+            <div className="card overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-line">
+                <p className="text-[12px] font-medium text-ink-900">Test results</p>
+                <span className={`num text-[11.5px] ${
+                  currentRunResult.allPassed ? 'text-positive-600' : 'text-warn-600'
+                }`}>
+                  {currentRunResult.passed}/{currentRunResult.total} passed
+                </span>
+              </div>
+              <ul className="divide-y divide-line max-h-[260px] overflow-y-auto">
+                {currentRunResult.results.map((r, i) => (
+                  <li key={i} className="px-4 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      {r.passed
+                        ? <CheckCircle2 size={12} className="text-positive-600" strokeWidth={1.8} />
+                        : <XCircle size={12} className="text-danger-600" strokeWidth={1.8} />}
+                      <span className="text-[12px] text-ink-800">
+                        Case {i + 1}: {r.passed ? 'passed' : 'failed'}
+                      </span>
+                    </div>
+                    <dl className="grid grid-cols-3 gap-2 mt-1.5 num text-[11px]">
+                      <div>
+                        <dt className="text-ink-400">input</dt>
+                        <dd className="text-ink-700 break-all">{r.input}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-ink-400">expected</dt>
+                        <dd className="text-ink-700 break-all">{r.expectedOutput}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-ink-400">got</dt>
+                        <dd className={`break-all ${r.passed ? 'text-positive-700' : r.error ? 'text-danger-700' : 'text-warn-700'}`}>
+                          {r.actualOutput || r.error || '(empty)'}
+                        </dd>
+                      </div>
+                    </dl>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
-        {/* Editor panel */}
-        <div className="card p-0 overflow-hidden flex flex-col min-h-[400px]">
-          {/* Editor toolbar */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.07] flex-shrink-0">
+        <div className="card flex flex-col overflow-hidden min-h-[360px]">
+          <div className="flex items-center justify-between gap-2 px-3 h-11 border-b border-line flex-shrink-0">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-red-500/70" />
-              <div className="w-3 h-3 rounded-full bg-amber-500/70" />
-              <div className="w-3 h-3 rounded-full bg-emerald-500/70" />
-            </div>
-            <div className="flex items-center gap-2">
+              <Code2 size={14} className="text-ink-400" strokeWidth={1.7} />
               <select
                 id="language-select"
                 value={currentAnswer.language}
                 onChange={e => handleLanguageChange(e.target.value)}
                 disabled={timeExpired}
-                className="bg-surface-700 border border-white/10 text-slate-300 text-xs rounded-lg px-2 py-1 focus:outline-none disabled:opacity-40"
+                className="bg-transparent text-[12px] text-ink-700 border-0 p-0 pr-1 focus:outline-none disabled:opacity-50"
+                aria-label="Language"
               >
                 <option value="javascript">JavaScript</option>
-                <option value="python">Python</option>
-                <option value="java">Java</option>
-                <option value="cpp">C++</option>
+                <option value="python" disabled={!runtimes.judge0}>
+                  Python{runtimes.judge0 ? '' : ' — unavailable'}
+                </option>
+                <option value="java" disabled={!runtimes.judge0}>
+                  Java{runtimes.judge0 ? '' : ' — unavailable'}
+                </option>
+                <option value="cpp" disabled={!runtimes.judge0}>
+                  C++{runtimes.judge0 ? '' : ' — unavailable'}
+                </option>
               </select>
-
-              {/* ── Run Code Button ─────────────────────────────────────── */}
-              <button
-                id="run-code-btn"
-                onClick={handleRunCode}
-                disabled={running || timeExpired || submitting}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold
-                  bg-emerald-600 hover:bg-emerald-500 text-white
-                  disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                {running
-                  ? <><Loader2 size={12} className="animate-spin" /> Running…</>
-                  : <><Play size={12} /> Run Code</>
-                }
-              </button>
             </div>
+
+            <button
+              id="run-code-btn"
+              onClick={handleRunCode}
+              disabled={running || timeExpired || submitting}
+              className="btn-secondary btn-sm"
+            >
+              {running
+                ? <><Loader2 size={12} className="animate-spin" /> Running</>
+                : <><Play size={12} /> Run code</>}
+            </button>
           </div>
 
-          {/* Monaco Editor */}
-          <div className="flex-1">
+          <div className="flex-1 min-h-0">
             <Editor
               height="100%"
               language={currentAnswer.language === 'cpp' ? 'cpp' : currentAnswer.language}
               value={currentAnswer.code}
               onChange={handleEditorChange}
               onMount={editor => { editorRef.current = editor }}
-              theme="vs-dark"
+              theme="vs"
               options={{
                 fontSize: 13,
+                fontFamily: 'IBM Plex Mono, ui-monospace, monospace',
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 padding: { top: 12, bottom: 12 },
@@ -543,38 +563,36 @@ export default function CodingTestPage() {
         </div>
       </div>
 
-      {/* ── Navigation + Submit ──────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-3">
+      {/* Navigation */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <button
           id="prev-question-btn"
           disabled={currentIdx === 0}
           onClick={() => setCurrentIdx(i => i - 1)}
-          className="btn-secondary gap-2 disabled:opacity-30"
+          className="btn-secondary btn-sm"
         >
-          <ChevronLeft size={16} /> Previous
+          <ChevronLeft size={14} /> Previous
         </button>
 
         <div className="flex items-center gap-2">
-          {/* Submit is always visible (not just on last question) */}
           <button
             id="submit-test-btn"
             onClick={handleSubmit}
             disabled={submitting || timeExpired}
-            className="btn-primary gap-2 disabled:opacity-40"
+            className="btn-primary btn-sm"
           >
             {submitting
-              ? <><Loader2 size={15} className="animate-spin" /> Submitting…</>
-              : <><Send size={15} /> Submit All</>
-            }
+              ? <><Loader2 size={13} className="animate-spin" /> Submitting</>
+              : <><Send size={13} /> Submit all</>}
           </button>
 
           {!isLast && (
             <button
               id="next-question-btn"
               onClick={() => setCurrentIdx(i => i + 1)}
-              className="btn-secondary gap-2"
+              className="btn-secondary btn-sm"
             >
-              Next <ChevronRight size={16} />
+              Next <ChevronRight size={14} />
             </button>
           )}
         </div>

@@ -1,14 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Bot, Send, X, Sparkles, Loader2, ChevronDown } from 'lucide-react'
+import { MessageSquare, Send, X, Loader2 } from 'lucide-react'
 import { useAgentStore } from '../store/agentStore'
 
-/**
- * RecruiterAssistant.jsx
- *
- * Floating AI chat widget for recruiters.
- * Natural language interface to the agent system.
- */
+const SUGGESTIONS = [
+  'Which candidates scored highest?',
+  'Summarise the pipeline for my latest job',
+  'Rank candidates for my latest job',
+  'Show me recent coding submissions',
+]
+
 export default function RecruiterAssistant() {
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
@@ -39,160 +39,131 @@ export default function RecruiterAssistant() {
     }
   }
 
-  const suggestions = [
-    'Find best candidates for my latest job',
-    'Rank candidates by score',
-    'Generate a coding test',
-    'Show me hiring analytics',
-  ]
-
   return (
     <>
-      {/* Floating Button */}
-      <AnimatePresence>
-        {!open && (
-          <motion.button
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            exit={{ scale: 0 }}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setOpen(true)}
-            className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 shadow-2xl shadow-primary-900/50 flex items-center justify-center text-white hover:shadow-primary-800/60 transition-shadow"
-          >
-            <Bot className="w-6 h-6" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-green-500 border-2 border-surface-800 animate-pulse" />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {!open && (
+        <button
+          id="assistant-open"
+          onClick={() => setOpen(true)}
+          className="fixed bottom-5 right-5 z-40 w-10 h-10 rounded-[9px] bg-ink-950 text-white flex items-center justify-center shadow-float hover:bg-ink-800 transition-colors"
+          aria-label="Open the hiring assistant"
+          title="Hiring assistant"
+        >
+          <MessageSquare size={16} strokeWidth={1.8} />
+        </button>
+      )}
 
-      {/* Chat Panel */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="fixed bottom-6 right-6 z-50 w-[400px] h-[560px] rounded-2xl border border-white/10 bg-surface-800/95 backdrop-blur-xl shadow-2xl shadow-black/40 flex flex-col overflow-hidden"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.07] bg-gradient-to-r from-primary-600/10 to-accent-600/10">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center">
-                  <Sparkles className="w-4.5 h-4.5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-white text-sm font-semibold">AI Hiring Assistant</h3>
-                  <p className="text-primary-400 text-[10px] font-medium">Powered by Agent System</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
+      {open && (
+        <div className="fixed bottom-5 right-5 z-40 w-[min(368px,calc(100vw-32px))] h-[520px] max-h-[calc(100vh-40px)] rounded-panel border border-line bg-paper shadow-float flex flex-col overflow-hidden animate-rise-in">
+          {/* Header */}
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-line flex-shrink-0">
+            <div>
+              <p className="text-[13px] font-medium text-ink-900">Hiring assistant</p>
+              <p className="text-[11px] text-ink-500">Runs on the agent system</p>
+            </div>
+            <div className="flex items-center gap-1">
+              {chatMessages.length > 0 && (
                 <button
                   onClick={clearChat}
-                  className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-colors text-xs"
-                  title="Clear chat"
+                  className="text-[11.5px] text-ink-500 hover:text-ink-900 px-2 py-1 rounded-md hover:bg-ink-50"
                 >
                   Clear
                 </button>
-                <button
-                  onClick={() => setOpen(false)}
-                  className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {chatMessages.length === 0 && (
-                <div className="text-center pt-8 space-y-4">
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500/20 to-accent-500/20 flex items-center justify-center mx-auto">
-                    <Bot className="w-7 h-7 text-primary-400" />
-                  </div>
-                  <div>
-                    <p className="text-white text-sm font-medium">How can I help?</p>
-                    <p className="text-slate-400 text-xs mt-1">Ask me anything about your recruitment pipeline.</p>
-                  </div>
-                  <div className="space-y-2 pt-2">
-                    {suggestions.map((s, i) => (
-                      <button
-                        key={i}
-                        onClick={() => { setInput(s); inputRef.current?.focus() }}
-                        className="block w-full text-left text-xs px-4 py-2.5 rounded-xl bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] hover:text-white transition-all ring-1 ring-white/5"
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               )}
+              <button
+                onClick={() => setOpen(false)}
+                className="p-1.5 rounded-md text-ink-400 hover:text-ink-900 hover:bg-ink-50"
+                aria-label="Close assistant"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          </div>
 
-              {chatMessages.map((msg, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+            {chatMessages.length === 0 && (
+              <div>
+                <p className="text-[13px] text-ink-800">Ask about your pipeline</p>
+                <p className="text-[12px] text-ink-500 mt-0.5">
+                  Answers come from your own candidates, jobs and submissions.
+                </p>
+                <div className="mt-3 space-y-1.5">
+                  {SUGGESTIONS.map(s => (
+                    <button
+                      key={s}
+                      onClick={() => { setInput(s); inputRef.current?.focus() }}
+                      className="block w-full text-left text-[12.5px] px-2.5 py-2 rounded-md border border-line text-ink-700 hover:bg-ink-50 transition-colors"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {chatMessages.map((msg, i) => (
+              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[85%] px-3 py-2 rounded-lg text-[12.5px] leading-5 whitespace-pre-wrap ${
                     msg.role === 'user'
-                      ? 'bg-primary-600/30 text-white rounded-tr-md'
-                      : 'bg-white/[0.05] text-slate-200 rounded-tl-md ring-1 ring-white/5'
-                  }`}>
-                    {msg.content}
-                    {msg.suggestions?.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {msg.suggestions.map((s, j) => (
-                          <button
-                            key={j}
-                            onClick={() => { setInput(s); inputRef.current?.focus() }}
-                            className="block text-xs text-primary-400 hover:text-primary-300 transition-colors"
-                          >
-                            → {s}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
-
-              {chatLoading && (
-                <div className="flex items-center gap-2 text-slate-400 text-sm">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="animate-pulse">Thinking...</span>
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="p-3 border-t border-white/[0.07]">
-              <div className="flex items-center gap-2 bg-white/[0.05] rounded-xl px-4 py-2 ring-1 ring-white/10 focus-within:ring-primary-500/50 transition-all">
-                <input
-                  ref={inputRef}
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Ask about candidates, jobs, tests..."
-                  className="flex-1 bg-transparent text-white text-sm placeholder:text-slate-500 outline-none"
-                  disabled={chatLoading}
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || chatLoading}
-                  className="p-2 rounded-lg text-primary-400 hover:text-primary-300 hover:bg-primary-500/10 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                      ? 'bg-ink-900 text-white'
+                      : 'bg-ink-50 text-ink-800 border border-line'
+                  }`}
                 >
-                  <Send className="w-4 h-4" />
-                </button>
+                  {msg.content}
+                  {msg.suggestions?.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-line/70 space-y-1">
+                      {msg.suggestions.map((s, j) => (
+                        <button
+                          key={j}
+                          onClick={() => { setInput(s); inputRef.current?.focus() }}
+                          className="block text-left text-[11.5px] text-accent-600 hover:underline"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
+            ))}
+
+            {chatLoading && (
+              <div className="flex items-center gap-2 text-[12.5px] text-ink-500">
+                <Loader2 size={13} className="animate-spin" />
+                Working
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Composer */}
+          <div className="p-3 border-t border-line flex-shrink-0">
+            <div className="flex items-center gap-2 rounded-lg border border-line px-2.5 focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/10">
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask about candidates or jobs"
+                className="flex-1 bg-transparent text-[12.5px] text-ink-900 py-2 outline-none placeholder:text-ink-400"
+                disabled={chatLoading}
+                aria-label="Message"
+              />
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || chatLoading}
+                className="p-1.5 rounded-md text-ink-600 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                aria-label="Send"
+              >
+                <Send size={14} strokeWidth={1.8} />
+              </button>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+        </div>
+      )}
     </>
   )
 }

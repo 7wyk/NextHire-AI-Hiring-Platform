@@ -1,34 +1,23 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import {
-  Users, ArrowLeft, Briefcase, Mail, Clock,
-  CheckCircle2, XCircle, ChevronDown, Trophy,
-  Code2, Loader2, MapPin
-} from 'lucide-react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ArrowLeft, Users, Code2, Mail, ChevronDown, Loader2 } from 'lucide-react'
 import api from '../../services/api'
 import toast from 'react-hot-toast'
+import {
+  PageHeader, StatusPill, EmptyState, Section, LoadingBlock, ScoreBar,
+} from '../../components/ui'
 
-const STATUSES = ['applied', 'screening', 'interview', 'shortlisted', 'hired', 'rejected']
-
-const statusColors = {
-  applied:     'badge',
-  screening:   'badge-warning',
-  interview:   'badge-primary',
-  shortlisted: 'badge-success',
-  hired:       'badge bg-teal-400/15 text-teal-200 border-teal-400/30',
-  rejected:    'badge-danger',
-}
+const STAGES = ['applied', 'screening', 'interview', 'shortlisted', 'hired', 'rejected']
 
 export default function JobApplicantsPage() {
   const { jobId } = useParams()
-  const navigate  = useNavigate()
+  const navigate = useNavigate()
 
-  const [job, setJob]               = useState(null)
+  const [job, setJob] = useState(null)
   const [applicants, setApplicants] = useState([])
   const [testResults, setTestResults] = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [updating, setUpdating]     = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [updating, setUpdating] = useState(null)
 
   useEffect(() => {
     const load = async () => {
@@ -40,7 +29,6 @@ export default function JobApplicantsPage() {
 
         if (appRes.status === 'fulfilled') {
           setApplicants(appRes.value.data.applications || [])
-          // job info is usually embedded in the first application
           if (appRes.value.data.job) setJob(appRes.value.data.job)
         }
         if (testRes.status === 'fulfilled') {
@@ -48,7 +36,7 @@ export default function JobApplicantsPage() {
           setTestResults(testRes.value.data.submissions || [])
         }
       } catch {
-        toast.error('Failed to load applicants')
+        toast.error('Could not load applicants')
       } finally {
         setLoading(false)
       }
@@ -60,9 +48,7 @@ export default function JobApplicantsPage() {
     setUpdating(appId)
     try {
       await api.patch(`/applications/${appId}/status`, { status })
-      setApplicants(prev =>
-        prev.map(a => a._id === appId ? { ...a, status } : a)
-      )
+      setApplicants(prev => prev.map(a => a._id === appId ? { ...a, status } : a))
       toast.success(`Moved to ${status}`)
     } catch {
       toast.error('Status update failed')
@@ -71,161 +57,190 @@ export default function JobApplicantsPage() {
     }
   }
 
-  // Build a quick lookup: candidateId → testScore
   const scoreMap = Object.fromEntries(
     testResults.map(r => [String(r.userId?._id || r.userId), r])
   )
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-primary-400" />
+      <div className="card">
+        <LoadingBlock label="Loading applicants" />
       </div>
     )
   }
 
   return (
-    <div className="space-y-5 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 rounded-xl bg-surface-700 hover:bg-surface-600 text-slate-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <div className="w-10 h-10 rounded-xl bg-primary-500/15 border border-primary-500/20 flex items-center justify-center">
-          <Briefcase className="w-5 h-5 text-primary-400" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold text-white">
-            {job?.title || 'Job'} — Applicants
-          </h1>
-          <p className="text-slate-400 text-sm">
-            {applicants.length} applicant{applicants.length !== 1 ? 's' : ''}
-            {testResults.length > 0 && ` · ${testResults.length} coding test submission${testResults.length !== 1 ? 's' : ''}`}
-          </p>
-        </div>
-      </div>
+    <div className="animate-fade-in">
+      <PageHeader
+        title={job?.title || 'Applicants'}
+        description={[
+          job?.company,
+          `${applicants.length} applicant${applicants.length === 1 ? '' : 's'}`,
+          testResults.length > 0
+            ? `${testResults.length} coding submission${testResults.length === 1 ? '' : 's'}`
+            : null,
+        ].filter(Boolean).join(' · ')}
+        actions={
+          <button onClick={() => navigate(-1)} className="btn-secondary btn-sm sm:h-9 sm:px-3.5">
+            <ArrowLeft size={14} strokeWidth={1.8} />
+            Back
+          </button>
+        }
+      />
 
-      {/* Coding test results summary (if available) */}
       {testResults.length > 0 && (
-        <div className="card bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20">
-          <div className="flex items-center gap-2 mb-3">
-            <Code2 className="w-4 h-4 text-purple-400" />
-            <p className="text-white font-semibold text-sm">Coding Test Leaderboard</p>
-          </div>
-          <div className="space-y-2">
-            {testResults.slice(0, 5).map((r, i) => (
-              <div key={r._id} className="flex items-center gap-3">
-                <span className="text-slate-500 text-xs w-4">{i + 1}.</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-slate-300 text-xs truncate">
-                    {r.userId?.name || 'Candidate'}
-                    <span className="text-slate-500 ml-1">({r.userId?.email})</span>
-                  </p>
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)] gap-4 mb-4">
+          <Section title="Coding submissions" padded={false}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th className="th w-10">#</th>
+                  <th className="th">Candidate</th>
+                  <th className="th">Pass rate</th>
+                  <th className="th">Verdict</th>
+                </tr>
+              </thead>
+              <tbody>
+                {testResults.map((r, i) => (
+                  <tr key={r._id} className="hover:bg-ink-50/60">
+                    <td className="td num text-ink-400 text-[12.5px]">{i + 1}</td>
+                    <td className="td">
+                      <p className="text-ink-900">{r.userId?.name || 'Candidate'}</p>
+                      <p className="text-[12px] text-ink-500 truncate">{r.userId?.email}</p>
+                    </td>
+                    <td className="td w-[150px]">
+                      <ScoreBar value={r.passRate || 0} />
+                    </td>
+                    <td className="td">
+                      <span className={`pill-${
+                        r.verdict === 'Accepted' ? 'positive'
+                        : r.verdict === 'Partial' ? 'warn' : 'danger'
+                      }`}>
+                        {r.verdict}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Section>
+
+          <Section title="Stage counts">
+            <dl className="space-y-2.5">
+              {STAGES.map(stage => (
+                <div key={stage} className="flex items-center justify-between">
+                  <dt><StatusPill status={stage} /></dt>
+                  <dd className="num text-[13px] text-ink-800">
+                    {applicants.filter(a => a.status === stage).length}
+                  </dd>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-20 h-1.5 bg-surface-600 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full"
-                      style={{ width: `${r.passRate || 0}%` }}
-                    />
-                  </div>
-                  <span className="text-white font-bold text-xs w-8 text-right">{r.passRate || 0}%</span>
-                  <span className={`badge text-xs ${r.verdict === 'Accepted' ? 'badge-success' : r.verdict === 'Partial' ? 'badge-warning' : 'badge-danger'}`}>
-                    {r.verdict}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </dl>
+          </Section>
         </div>
       )}
 
-      {/* Applicants table */}
-      {applicants.length === 0 ? (
-        <div className="card text-center py-16">
-          <Users className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-          <p className="text-slate-400">No applicants yet for this job.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {applicants.map((app, i) => {
-            const candidate = app.candidate || app.user || {}
-            const cid       = String(candidate._id || candidate)
-            const testInfo  = scoreMap[cid]
+      <div className="card overflow-hidden">
+        {applicants.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="No applicants yet"
+            description="Applications for this role appear here as candidates apply."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th className="th">Candidate</th>
+                  <th className="th">Applied</th>
+                  <th className="th">Coding test</th>
+                  <th className="th">Stage</th>
+                  <th className="th w-[150px]">Move to</th>
+                </tr>
+              </thead>
+              <tbody>
+                {applicants.map(app => {
+                  const candidate = app.candidate || app.user || {}
+                  const cid = String(candidate._id || candidate)
+                  const testInfo = scoreMap[cid]
 
-            return (
-              <motion.div
-                key={app._id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-                className="card"
-              >
-                <div className="flex items-center gap-4">
-                  {/* Avatar */}
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary-600/30 to-accent-500/30 border border-primary-500/20 flex items-center justify-center text-primary-300 font-bold text-sm flex-shrink-0">
-                    {(candidate.name || '?')[0].toUpperCase()}
-                  </div>
+                  return (
+                    <tr key={app._id} className="hover:bg-ink-50/60 transition-colors">
+                      <td className="td">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-7 h-7 rounded-md bg-ink-100 text-ink-600 text-[11.5px] font-medium flex items-center justify-center flex-shrink-0">
+                            {(candidate.name || '?')[0]?.toUpperCase()}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-ink-900 truncate">{candidate.name || 'Unknown'}</p>
+                            <p className="text-[12px] text-ink-500 flex items-center gap-1 truncate">
+                              <Mail size={10} strokeWidth={1.8} />
+                              {candidate.email}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="td num text-[12.5px] text-ink-500 whitespace-nowrap">
+                        {app.createdAt ? new Date(app.createdAt).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="td">
+                        {testInfo ? (
+                          <span className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-700">
+                            <Code2 size={12} className="text-ink-400" strokeWidth={1.8} />
+                            <span className="num">{testInfo.passRate}%</span>
+                            <span className="text-ink-400">·</span>
+                            {testInfo.verdict}
+                          </span>
+                        ) : (
+                          <span className="text-[12.5px] text-ink-400">Not taken</span>
+                        )}
+                      </td>
+                      <td className="td"><StatusPill status={app.status} /></td>
+                      <td className="td">
+                        <div className="relative">
+                          <select
+                            className="input h-8 text-[12.5px] pr-7"
+                            value={app.status}
+                            disabled={updating === app._id}
+                            onChange={e => updateStatus(app._id, e.target.value)}
+                            aria-label={`Stage for ${candidate.name || 'candidate'}`}
+                          >
+                            {STAGES.map(s => (
+                              <option key={s} value={s} className="capitalize">{s}</option>
+                            ))}
+                          </select>
+                          {updating === app._id
+                            ? <Loader2 size={12} className="absolute right-2 top-1/2 -translate-y-1/2 animate-spin text-ink-400" />
+                            : <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
+                          }
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-semibold text-sm">{candidate.name || 'Unknown'}</p>
-                    <div className="flex items-center gap-3 text-slate-500 text-xs mt-0.5">
-                      <span className="flex items-center gap-1"><Mail size={11} /> {candidate.email}</span>
-                      <span className="flex items-center gap-1">
-                        <Clock size={11} />
-                        {new Date(app.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                    {/* Test score badge */}
-                    {testInfo && (
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <Code2 size={11} className="text-purple-400" />
-                        <span className="text-purple-300 text-xs font-medium">
-                          Test: {testInfo.passRate}% — {testInfo.verdict}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Status + change */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className={`${statusColors[app.status] || 'badge'} badge capitalize text-xs`}>
-                      {app.status}
-                    </span>
-
-                    <div className="relative">
-                      <select
-                        className="input text-xs py-1.5 pr-7 cursor-pointer appearance-none"
-                        value={app.status}
-                        disabled={updating === app._id}
-                        onChange={e => updateStatus(app._id, e.target.value)}
-                      >
-                        {STATUSES.map(s => (
-                          <option key={s} value={s} className="capitalize">{s}</option>
-                        ))}
-                      </select>
-                      {updating === app._id
-                        ? <Loader2 size={13} className="absolute right-2 top-1/2 -translate-y-1/2 animate-spin text-slate-400" />
-                        : <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                      }
-                    </div>
-                  </div>
-                </div>
-
-                {/* Cover letter preview */}
-                {app.coverLetter && (
-                  <div className="mt-3 pt-3 border-t border-white/[0.06]">
-                    <p className="text-slate-500 text-xs mb-1 font-medium">Cover letter</p>
-                    <p className="text-slate-400 text-xs line-clamp-2">{app.coverLetter}</p>
-                  </div>
-                )}
-              </motion.div>
-            )
-          })}
+      {applicants.some(a => a.coverLetter) && (
+        <div className="mt-4">
+          <Section title="Cover letters" padded={false}>
+            <ul className="divide-y divide-line">
+              {applicants.filter(a => a.coverLetter).map(app => (
+                <li key={app._id} className="px-5 py-3.5">
+                  <p className="text-[12.5px] text-ink-900 font-medium">
+                    {app.candidate?.name || 'Candidate'}
+                  </p>
+                  <p className="text-[12.5px] text-ink-600 mt-1 leading-6 whitespace-pre-line">
+                    {app.coverLetter}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </Section>
         </div>
       )}
     </div>

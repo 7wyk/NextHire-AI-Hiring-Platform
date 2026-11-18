@@ -1,0 +1,53 @@
+# Render blueprint for the Nexthire API.
+# The client is hosted on Vercel (see client/vercel.json).
+#
+# Secrets are marked sync:false — set their values in the Render dashboard,
+# never in this file.
+services:
+  - type: web
+    name: nexthire-api
+    runtime: node
+    rootDir: server
+    plan: free
+    region: oregon
+    buildCommand: npm ci --omit=dev
+    startCommand: node index.js
+    healthCheckPath: /api/health?check=full
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: LOG_TO_FILE
+        value: "false"
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: JUDGE0_API_KEY
+        sync: false
+      - key: JUDGE0_URL
+        value: https://judge0-ce.p.rapidapi.com
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

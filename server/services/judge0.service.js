@@ -100,13 +100,48 @@ const pollResult = async (token, maxAttempts = 10, intervalMs = 1500) => {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Errors
+//
+// `ExecutionUnavailableError` means the *infrastructure* could not run the
+// code (no key, bad key, rate limit, timeout, unsupported language). It must
+// never be scored as a wrong answer — the caller aborts instead.
+// A candidate's own compile/runtime error comes back as a normal result with
+// statusId >= 4 and is graded normally.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export class ExecutionUnavailableError extends Error {
+  constructor(message, { reason = 'execution_unavailable', cause } = {}) {
+    super(message)
+    this.name = 'ExecutionUnavailableError'
+    this.reason = reason
+    this.isExecutionUnavailable = true
+    if (cause) this.cause = cause
+  }
+}
+
+export const isJudge0Configured = () => Boolean(JUDGE0_KEY)
+
+export const isLanguageSupported = (languageKey) =>
+  Object.prototype.hasOwnProperty.call(LANGUAGES, languageKey)
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main export: execute a single code run and return normalised result
 // ─────────────────────────────────────────────────────────────────────────────
 export const executeCode = async ({ code, languageKey, stdin = '' }) => {
-  const lang = LANGUAGES[languageKey]
-  if (!lang) throw new Error(`Unsupported language: ${languageKey}`)
+  if (!isLanguageSupported(languageKey)) {
+    throw new ExecutionUnavailableError(`Unsupported language: ${languageKey}`, {
+      reason: 'unsupported_language',
+    })
+  }
 
-  if (!JUDGE0_KEY) throw new Error('JUDGE0_API_KEY is not set in environment variables')
+  if (!JUDGE0_KEY) {
+    throw new ExecutionUnavailableError(
+      'Judge0 is not configured, so this language cannot be executed.',
+      { reason: 'not_configured' }
+    )
+  }
+
+  const lang = LANGUAGES[languageKey]
 
   try {
     // Step 1: Submit
@@ -143,9 +178,22 @@ export const executeCode = async ({ code, languageKey, stdin = '' }) => {
       memory,
     }
   } catch (err) {
-    // Surface clean errors for 4xx from Judge0
-    if (err.response?.status === 401) throw new Error('Invalid Judge0 API key')
-    if (err.response?.status === 429) throw new Error('Judge0 rate limit reached — try again later')
-    throw new Error(`Code execution failed: ${err.message}`)
+    if (err instanceof ExecutionUnavailableError) throw err
+
+    // Infrastructure failures are never graded as wrong answers.
+    if (err.response?.status === 401) {
+      throw new ExecutionUnavailableError('Judge0 rejected the configured API key', { reason: 'auth_failed', cause: err })
+    }
+    if (err.response?.status === 429) {
+      throw new ExecutionUnavailableError('Judge0 rate limit reached — try again later', { reason: 'rate_limited', cause: err })
+    }
+    if (String(err.message || '').includes('polling timeout')) {
+      throw new ExecutionUnavailableError('Judge0 did not return a result in time', { reason: 'timeout', cause: err })
+    }
+
+    throw new ExecutionUnavailableError(`Code execution is unavailable: ${err.message}`, {
+      reason: 'request_failed',
+      cause: err,
+    })
   }
 }

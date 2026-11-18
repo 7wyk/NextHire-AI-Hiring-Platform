@@ -1,205 +1,209 @@
-import { useState, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useEffect } from 'react'
 import Editor from '@monaco-editor/react'
 import {
-  Play, Send, ChevronDown, CheckCircle, XCircle,
-  AlertCircle, Clock, Cpu, RotateCcw, Loader2,
-  Code2, BookOpen, Trophy, ChevronRight
+  Play, Send, ChevronDown, CheckCircle2, XCircle, AlertCircle,
+  RotateCcw, Loader2, Code2, BookOpen, PanelLeft,
 } from 'lucide-react'
 import api from '../../services/api'
 import toast from 'react-hot-toast'
+import { EmptyState } from '../../components/ui'
 
-// ── Difficulty badges ──────────────────────────────────────────────────────
-const diffConfig = {
-  easy:   { cls: 'badge-success', label: 'Easy' },
-  medium: { cls: 'badge-warning', label: 'Medium' },
-  hard:   { cls: 'badge-danger',  label: 'Hard' },
+const DIFFICULTY = {
+  easy:   { label: 'Easy',   tone: 'positive' },
+  medium: { label: 'Medium', tone: 'warn' },
+  hard:   { label: 'Hard',   tone: 'danger' },
 }
 
-// ── Default starter code per language when no problem is loaded ────────────
 const DEFAULT_CODE = {
-  javascript: `// Start coding...\nfunction solution() {\n  console.log("Hello, World!");\n}\nsolution();`,
-  python: `# Start coding...\ndef solution():\n    print("Hello, World!")\n\nsolution()`,
+  javascript: `// Start coding\nfunction solution() {\n  console.log("Hello, World!");\n}\nsolution();`,
+  python: `# Start coding\ndef solution():\n    print("Hello, World!")\n\nsolution()`,
   cpp: `#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello, World!" << endl;\n    return 0;\n}`,
   java: `public class Solution {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}`,
   go: `package main\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, World!")\n}`,
   rust: `fn main() {\n    println!("Hello, World!");\n}`,
 }
 
-// ── Verdict styling ────────────────────────────────────────────────────────
-const verdictConfig = {
-  Accepted:     { color: 'text-emerald-400', bg: 'bg-emerald-500/10', icon: CheckCircle },
-  Partial:      { color: 'text-amber-400',   bg: 'bg-amber-500/10',   icon: AlertCircle },
-  'Wrong Answer':{ color: 'text-red-400',    bg: 'bg-red-500/10',     icon: XCircle },
+const VERDICT = {
+  Accepted:      { tone: 'text-positive-600 bg-positive-50', icon: CheckCircle2 },
+  Partial:       { tone: 'text-warn-600 bg-warn-50', icon: AlertCircle },
+  'Wrong Answer':{ tone: 'text-danger-600 bg-danger-50', icon: XCircle },
 }
 
+const TABS = [
+  { key: 'problem', label: 'Problem' },
+  { key: 'results', label: 'Results' },
+  { key: 'ai', label: 'Review' },
+]
+
 export default function CodingPage() {
-  const [problems, setProblems]         = useState([])
+  const [problems, setProblems] = useState([])
   const [activeProblem, setActiveProblem] = useState(null)
-  const [language, setLanguage]         = useState('javascript')
-  const [availLangs, setAvailLangs]     = useState([])
-  const [code, setCode]                 = useState(DEFAULT_CODE.javascript)
-  const [stdin, setStdin]               = useState('')
-  const [runResult, setRunResult]       = useState(null)
+  const [language, setLanguage] = useState('javascript')
+  const [availLangs, setAvailLangs] = useState([])
+  const [code, setCode] = useState(DEFAULT_CODE.javascript)
+  const [stdin, setStdin] = useState('')
+  const [runResult, setRunResult] = useState(null)
   const [submitResult, setSubmitResult] = useState(null)
-  const [running, setRunning]           = useState(false)
-  const [submitting, setSubmitting]     = useState(false)
-  const [activeTab, setActiveTab]       = useState('problem') // 'problem' | 'results' | 'ai'
-  const [diffFilter, setDiffFilter]     = useState('')
+  const [running, setRunning] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [activeTab, setActiveTab] = useState('problem')
+  const [diffFilter, setDiffFilter] = useState('')
   const [showProblems, setShowProblems] = useState(true)
 
-  // Fetch problems + languages on mount
   useEffect(() => {
-    api.get('/code/languages').then(r => setAvailLangs(r.data.languages)).catch(() => {})
-    api.get('/code/problems').then(r => setProblems(r.data.problems)).catch(() => {})
+    api.get('/code/languages').then(r => setAvailLangs(r.data.languages || [])).catch(() => {})
+    api.get('/code/problems').then(r => setProblems(r.data.problems || [])).catch(() => {})
   }, [])
 
-  // When language changes, reset code to starter
   const handleLangChange = (lang) => {
     setLanguage(lang)
-    const starter = activeProblem?.starterCode?.[lang] || DEFAULT_CODE[lang] || '// Start coding...'
-    setCode(starter)
+    setCode(activeProblem?.starterCode?.[lang] || DEFAULT_CODE[lang] || '// Start coding')
   }
 
-  // Load a problem
   const loadProblem = async (slug) => {
     try {
       const { data } = await api.get(`/code/problems/${slug}`)
       setActiveProblem(data.problem)
-      const starter = data.problem.starterCode?.[language] || DEFAULT_CODE[language]
-      setCode(starter)
-      setRunResult(null); setSubmitResult(null)
+      setCode(data.problem.starterCode?.[language] || DEFAULT_CODE[language])
+      setRunResult(null)
+      setSubmitResult(null)
       setActiveTab('problem')
-    } catch { toast.error('Failed to load problem') }
+    } catch {
+      toast.error('Could not load that problem')
+    }
   }
 
-  // Run code (custom stdin)
   const handleRun = async () => {
     if (!code.trim()) return
-    setRunning(true); setRunResult(null)
+    setRunning(true)
+    setRunResult(null)
+    setSubmitResult(null)
     try {
       const { data } = await api.post('/code/run', { code, language, stdin })
       setRunResult(data.result)
       setActiveTab('results')
     } catch (err) {
       toast.error(err.response?.data?.message || 'Run failed')
-    } finally { setRunning(false) }
+    } finally {
+      setRunning(false)
+    }
   }
 
-  // Submit against test cases
   const handleSubmit = async () => {
-    if (!activeProblem) return toast.error('Select a problem first')
-    setSubmitting(true); setSubmitResult(null)
+    if (!activeProblem) return toast.error('Select a problem before submitting')
+    setSubmitting(true)
+    setSubmitResult(null)
     try {
       const { data } = await api.post('/code/submit', {
-        code, language, problemSlug: activeProblem.slug
+        code, language, problemSlug: activeProblem.slug,
       })
       setSubmitResult(data)
       setActiveTab('results')
-      if (data.verdict === 'Accepted') toast.success('🎉 All tests passed!')
+      if (data.verdict === 'Accepted') toast.success('All test cases passed')
       else toast.error(`${data.passed}/${data.total} tests passed`)
     } catch (err) {
       toast.error(err.response?.data?.message || 'Submit failed')
-    } finally { setSubmitting(false) }
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const resetCode = () => {
-    const starter = activeProblem?.starterCode?.[language] || DEFAULT_CODE[language]
-    setCode(starter)
-    toast('Code reset to starter template')
+    setCode(activeProblem?.starterCode?.[language] || DEFAULT_CODE[language])
+    toast('Reset to the starter code')
   }
 
   const filteredProblems = diffFilter
     ? problems.filter(p => p.difficulty === diffFilter)
     : problems
 
-  const vc = submitResult && verdictConfig[submitResult.verdict]
+  const vc = submitResult && VERDICT[submitResult.verdict]
 
   return (
-    <div className="h-[calc(100vh-112px)] flex gap-0 animate-fade-in overflow-hidden rounded-xl border border-white/[0.07]">
+    <div className="h-[calc(100vh-104px)] flex border border-line rounded-xl overflow-hidden bg-white animate-fade-in min-h-[520px]">
+      {/* Problems */}
+      {showProblems && (
+        <aside className="hidden md:flex w-[236px] flex-shrink-0 flex-col border-r border-line">
+          <div className="px-3 h-11 flex items-center justify-between border-b border-line">
+            <span className="text-[12.5px] font-medium text-ink-800">Problems</span>
+            <select
+              className="text-[11.5px] bg-white border border-line text-ink-600 rounded-md px-1.5 py-1"
+              value={diffFilter}
+              onChange={e => setDiffFilter(e.target.value)}
+              aria-label="Filter by difficulty"
+            >
+              <option value="">All</option>
+              <option value="easy">Easy</option>
+              <option value="medium">Medium</option>
+              <option value="hard">Hard</option>
+            </select>
+          </div>
 
-      {/* ── Left Panel: Problem List ───────────────────────────────────── */}
-      <AnimatePresence initial={false}>
-        {showProblems && (
-          <motion.aside
-            initial={{ width: 0, opacity: 0 }} animate={{ width: 260, opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }} transition={{ duration: 0.25 }}
-            className="bg-surface-800 border-r border-white/[0.07] flex flex-col overflow-hidden flex-shrink-0"
-          >
-            <div className="p-3 border-b border-white/[0.07] flex items-center justify-between">
-              <span className="text-white font-semibold text-sm flex items-center gap-2">
-                <BookOpen size={15} className="text-primary-400" /> Problems
-              </span>
-              <select
-                className="text-xs bg-surface-700 border border-white/10 text-slate-300 rounded-lg px-2 py-1 focus:outline-none"
-                value={diffFilter} onChange={e => setDiffFilter(e.target.value)}
-              >
-                <option value="">All</option>
-                <option value="easy">Easy</option>
-                <option value="medium">Medium</option>
-                <option value="hard">Hard</option>
-              </select>
-            </div>
-
-            <div className="flex-1 overflow-y-auto divide-y divide-white/[0.04]">
-              {filteredProblems.length === 0 ? (
-                <p className="text-slate-500 text-xs p-4 text-center">No problems found.<br />Run the seed script first.</p>
-              ) : filteredProblems.map((p, i) => (
-                <button key={p._id}
+          <div className="flex-1 overflow-y-auto">
+            {filteredProblems.length === 0 ? (
+              <p className="text-[12px] text-ink-500 p-4">
+                No problems found. The problem set is seeded on the server.
+              </p>
+            ) : filteredProblems.map(p => {
+              const d = DIFFICULTY[p.difficulty] || DIFFICULTY.medium
+              const active = activeProblem?.slug === p.slug
+              return (
+                <button
+                  key={p._id}
                   onClick={() => loadProblem(p.slug)}
-                  className={`w-full text-left px-4 py-3 hover:bg-white/[0.03] transition-colors
-                    ${activeProblem?.slug === p.slug ? 'bg-primary-500/10 border-l-2 border-primary-500' : ''}`}
+                  className={`w-full text-left px-3 py-2.5 border-b border-line transition-colors ${
+                    active ? 'bg-accent-50' : 'hover:bg-ink-50'
+                  }`}
                 >
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-slate-200 text-xs font-medium line-clamp-1">{p.title}</span>
-                    <span className={`${diffConfig[p.difficulty].cls} badge text-[10px] px-1.5 py-0`}>
-                      {diffConfig[p.difficulty].label}
+                  <span className="flex items-center justify-between gap-2">
+                    <span className={`text-[12.5px] truncate ${active ? 'text-accent-700' : 'text-ink-800'}`}>
+                      {p.title}
                     </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {p.tags?.slice(0, 2).map(t => (
-                      <span key={t} className="text-slate-500 text-[10px]">#{t}</span>
-                    ))}
-                  </div>
+                    <span className={`pill-${d.tone} flex-shrink-0`}>{d.label}</span>
+                  </span>
+                  {p.tags?.length > 0 && (
+                    <span className="block text-[11px] text-ink-400 mt-0.5 truncate">
+                      {p.tags.slice(0, 2).map(t => `#${t}`).join(' ')}
+                    </span>
+                  )}
                 </button>
-              ))}
-            </div>
-          </motion.aside>
-        )}
-      </AnimatePresence>
+              )
+            })}
+          </div>
+        </aside>
+      )}
 
-      {/* ── Center: Monaco Editor ─────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 overflow-hidden">
-        {/* Editor Toolbar */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-surface-800 border-b border-white/[0.07] gap-3 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            {/* Toggle problem list */}
-            <button onClick={() => setShowProblems(p => !p)}
-              className="text-slate-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5">
-              <BookOpen size={16} />
+      {/* Editor */}
+      <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 h-11 border-b border-line flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setShowProblems(v => !v)}
+              className="hidden md:inline-flex p-1.5 rounded-md text-ink-500 hover:text-ink-900 hover:bg-ink-100"
+              aria-label={showProblems ? 'Hide problem list' : 'Show problem list'}
+            >
+              <PanelLeft size={15} strokeWidth={1.7} />
             </button>
-
-            {/* Problem name & difficulty */}
             {activeProblem ? (
-              <div className="flex items-center gap-2">
-                <span className="text-white text-sm font-medium">{activeProblem.title}</span>
-                <span className={`${diffConfig[activeProblem.difficulty].cls} badge text-xs`}>
-                  {diffConfig[activeProblem.difficulty].label}
+              <span className="flex items-center gap-2 min-w-0">
+                <span className="text-[12.5px] text-ink-900 truncate">{activeProblem.title}</span>
+                <span className={`pill-${DIFFICULTY[activeProblem.difficulty]?.tone || 'warn'} flex-shrink-0`}>
+                  {DIFFICULTY[activeProblem.difficulty]?.label || activeProblem.difficulty}
                 </span>
-              </div>
+              </span>
             ) : (
-              <span className="text-slate-400 text-sm">Select a problem →</span>
+              <span className="text-[12.5px] text-ink-500">Select a problem</span>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Language selector */}
+          <div className="flex items-center gap-1.5">
             <div className="relative">
               <select
                 id="language-select"
                 value={language}
                 onChange={e => handleLangChange(e.target.value)}
-                className="text-sm bg-surface-700 border border-white/10 text-slate-200 rounded-xl pl-3 pr-7 py-1.5 focus:outline-none focus:border-primary-500/40 appearance-none cursor-pointer"
+                className="input h-7 text-[12px] pr-6 w-auto min-w-[104px]"
+                aria-label="Language"
               >
                 {(availLangs.length > 0
                   ? availLangs
@@ -208,131 +212,134 @@ export default function CodingPage() {
                   <option key={l.key} value={l.key}>{l.key}</option>
                 ))}
               </select>
-              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 w-3.5 h-3.5 pointer-events-none" />
+              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
             </div>
 
-            {/* Reset */}
-            <button onClick={resetCode} title="Reset to starter"
-              className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-colors">
-              <RotateCcw size={15} />
+            <button
+              onClick={resetCode}
+              className="p-1.5 rounded-md text-ink-500 hover:text-ink-900 hover:bg-ink-100"
+              title="Reset to starter code"
+              aria-label="Reset code"
+            >
+              <RotateCcw size={14} strokeWidth={1.7} />
             </button>
 
-            {/* Run */}
-            <button id="run-code-btn"
-              onClick={handleRun} disabled={running || submitting}
-              className="btn-secondary text-xs px-3 py-2 gap-1.5 disabled:opacity-50">
-              {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            <button
+              id="run-code-btn"
+              onClick={handleRun}
+              disabled={running || submitting}
+              className="btn-secondary btn-sm"
+            >
+              {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
               Run
             </button>
 
-            {/* Submit */}
-            <button id="submit-code-btn"
-              onClick={handleSubmit} disabled={running || submitting || !activeProblem}
-              className="btn-primary text-xs px-4 py-2 gap-1.5 disabled:opacity-40">
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            <button
+              id="submit-code-btn"
+              onClick={handleSubmit}
+              disabled={running || submitting || !activeProblem}
+              className="btn-primary btn-sm"
+            >
+              {submitting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
               Submit
             </button>
           </div>
         </div>
 
-        {/* Monaco Editor */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0">
           <Editor
             height="100%"
             language={language === 'cpp' ? 'cpp' : language === 'csharp' ? 'csharp' : language}
             value={code}
             onChange={v => setCode(v || '')}
-            theme="vs-dark"
+            theme="vs"
             options={{
-              fontSize: 14,
-              fontFamily: 'JetBrains Mono, Fira Code, monospace',
+              fontSize: 13,
+              fontFamily: 'IBM Plex Mono, ui-monospace, monospace',
               minimap: { enabled: false },
               scrollBeyondLastLine: false,
-              padding: { top: 16, bottom: 16 },
+              padding: { top: 14, bottom: 14 },
               lineNumbers: 'on',
-              roundedSelection: true,
               wordWrap: 'on',
               tabSize: 2,
               automaticLayout: true,
               suggest: { showWords: false },
+              renderLineHighlight: 'line',
             }}
           />
         </div>
       </div>
 
-      {/* ── Right Panel: Problem Description + Results ─────────────────── */}
-      <div className="w-80 flex flex-col bg-surface-800 border-l border-white/[0.07] overflow-hidden flex-shrink-0">
-        {/* Tabs */}
-        <div className="flex border-b border-white/[0.07] flex-shrink-0">
-          {[
-            { key: 'problem', label: 'Problem', icon: BookOpen },
-            { key: 'results', label: 'Results', icon: CheckCircle },
-            { key: 'ai',      label: 'AI Eval', icon: Trophy },
-          ].map(tab => (
-            <button key={tab.key}
+      {/* Side panel */}
+      <div className="hidden lg:flex w-[330px] flex-shrink-0 flex-col border-l border-line">
+        <div className="flex border-b border-line flex-shrink-0">
+          {TABS.map(tab => (
+            <button
+              key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex-1 py-2.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors
-                ${activeTab === tab.key
-                  ? 'text-primary-300 border-b-2 border-primary-500 bg-primary-500/5'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+              className={`flex-1 h-11 ${activeTab === tab.key ? 'tab tab-active' : 'tab'}`}
             >
-              <tab.icon size={13} /> {tab.label}
+              {tab.label}
             </button>
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {/* ── Problem Description ── */}
+        <div className="flex-1 overflow-y-auto p-4">
           {activeTab === 'problem' && (
-            <div className="p-4 space-y-4">
+            <div className="space-y-4">
               {activeProblem ? (
                 <>
-                  <div>
-                    <h3 className="text-white font-semibold mb-2">{activeProblem.title}</h3>
-                    <p className="text-slate-300 text-xs leading-relaxed whitespace-pre-wrap">
-                      {activeProblem.description}
-                    </p>
-                  </div>
+                  <p className="text-[12.5px] text-ink-700 leading-6 whitespace-pre-wrap">
+                    {activeProblem.description}
+                  </p>
+
                   {activeProblem.examples?.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Examples</p>
-                      {activeProblem.examples.map((ex, i) => (
-                        <div key={i} className="bg-surface-900 rounded-xl p-3 space-y-1">
-                          <p className="text-slate-400 text-xs"><span className="text-slate-300 font-medium">Input:</span> {ex.input}</p>
-                          <p className="text-slate-400 text-xs"><span className="text-slate-300 font-medium">Output:</span> {ex.output}</p>
-                          {ex.explanation && <p className="text-slate-500 text-xs">{ex.explanation}</p>}
-                        </div>
-                      ))}
+                    <div>
+                      <p className="text-[11.5px] text-ink-500 mb-1.5">Examples</p>
+                      <div className="space-y-2">
+                        {activeProblem.examples.map((ex, i) => (
+                          <div key={i} className="surface-inset px-3 py-2 space-y-1">
+                            <p className="num text-[11.5px] text-ink-700">Input: {ex.input}</p>
+                            <p className="num text-[11.5px] text-ink-700">Output: {ex.output}</p>
+                            {ex.explanation && (
+                              <p className="text-[11.5px] text-ink-500">{ex.explanation}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
+
                   {activeProblem.constraints && (
                     <div>
-                      <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">Constraints</p>
-                      <p className="text-slate-400 text-xs leading-relaxed font-mono whitespace-pre">{activeProblem.constraints}</p>
+                      <p className="text-[11.5px] text-ink-500 mb-1">Constraints</p>
+                      <p className="num text-[11.5px] text-ink-600 whitespace-pre-wrap leading-5">
+                        {activeProblem.constraints}
+                      </p>
                     </div>
                   )}
+
                   {activeProblem.tags?.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-2">
-                      {activeProblem.tags.map(t => (
-                        <span key={t} className="badge bg-surface-700 text-slate-400 border-white/10 text-[10px]">#{t}</span>
-                      ))}
-                    </div>
+                    <p className="text-[11.5px] text-ink-400">
+                      {activeProblem.tags.map(t => `#${t}`).join(' ')}
+                    </p>
                   )}
                 </>
               ) : (
-                <div className="text-center py-12">
-                  <Code2 className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                  <p className="text-slate-500 text-sm">Select a problem from the list to get started</p>
-                </div>
+                <EmptyState
+                  icon={BookOpen}
+                  title="No problem selected"
+                  description="Choose a problem from the list to read its statement."
+                />
               )}
 
-              {/* Custom stdin for Run */}
-              <div className="border-t border-white/[0.07] pt-4">
-                <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">Custom Input (stdin)</p>
+              <div className="pt-4 border-t border-line">
+                <label className="label" htmlFor="stdin">Custom input</label>
                 <textarea
-                  className="input text-xs font-mono resize-none"
+                  id="stdin"
+                  className="input num text-[12px]"
                   rows={3}
-                  placeholder="Enter custom input to test with Run..."
+                  placeholder="Passed to the program on Run"
                   value={stdin}
                   onChange={e => setStdin(e.target.value)}
                 />
@@ -340,133 +347,131 @@ export default function CodingPage() {
             </div>
           )}
 
-          {/* ── Run/Submit Results ── */}
           {activeTab === 'results' && (
-            <div className="p-4 space-y-4">
-              {/* Run result */}
+            <div className="space-y-4">
               {runResult && !submitResult && (
                 <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">Run Output</p>
-                    <div className="flex items-center gap-2 text-xs text-slate-400">
-                      {runResult.time && <span className="flex items-center gap-1"><Clock size={11}/> {runResult.time}</span>}
-                      {runResult.memory && <span className="flex items-center gap-1"><Cpu size={11}/> {runResult.memory}</span>}
-                    </div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[11.5px] text-ink-500">Run output</p>
+                    <p className="num text-[11px] text-ink-400">
+                      {[runResult.time, runResult.memory].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
-                  <div className={`rounded-xl p-3 text-xs font-mono whitespace-pre-wrap break-all
-                    ${runResult.accepted ? 'bg-emerald-500/8 border border-emerald-500/20 text-emerald-300'
-                      : 'bg-red-500/8 border border-red-500/20 text-red-300'}`}>
+                  <pre className={`num text-[12px] whitespace-pre-wrap break-words rounded-lg border px-3 py-2.5 ${
+                    runResult.accepted
+                      ? 'bg-positive-50 border-positive-100 text-positive-700'
+                      : 'bg-danger-50 border-danger-100 text-danger-700'
+                  }`}>
                     {runResult.stdout || runResult.stderr || runResult.compileOutput || '(no output)'}
-                  </div>
-                  {(runResult.stderr || runResult.compileOutput) && runResult.stdout && (
-                    <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-3 mt-2">
-                      <p className="text-red-400 text-xs font-mono whitespace-pre-wrap">
-                        {runResult.stderr || runResult.compileOutput}
-                      </p>
-                    </div>
+                  </pre>
+                  {runResult.stdout && (runResult.stderr || runResult.compileOutput) && (
+                    <pre className="num text-[12px] whitespace-pre-wrap break-words rounded-lg border border-danger-100 bg-danger-50 text-danger-700 px-3 py-2.5 mt-2">
+                      {runResult.stderr || runResult.compileOutput}
+                    </pre>
                   )}
                 </div>
               )}
 
-              {/* Submit result */}
               {submitResult && (
-                <div className="space-y-3">
-                  {/* Verdict */}
+                <>
                   {vc && (
-                    <div className={`flex items-center gap-3 p-3 rounded-xl ${vc.bg} border border-white/10`}>
-                      <vc.icon size={20} className={vc.color} />
-                      <div>
-                        <p className={`font-bold ${vc.color}`}>{submitResult.verdict}</p>
-                        <p className="text-slate-400 text-xs">{submitResult.passed}/{submitResult.total} test cases passed</p>
-                      </div>
+                    <div className={`rounded-lg px-3 py-2.5 ${vc.tone}`}>
+                      <p className="text-[13px] font-medium">{submitResult.verdict}</p>
+                      <p className="num text-[11.5px] opacity-80">
+                        {submitResult.passed}/{submitResult.total} test cases passed
+                      </p>
                     </div>
                   )}
 
-                  {/* Pass rate bar */}
                   <div>
-                    <div className="flex justify-between text-xs text-slate-400 mb-1">
-                      <span>Pass Rate</span>
-                      <span className="font-bold text-white">{submitResult.passRate}%</span>
+                    <div className="flex items-baseline justify-between text-[11.5px] text-ink-500 mb-1.5">
+                      <span>Pass rate</span>
+                      <span className="num text-ink-900">{submitResult.passRate}%</span>
                     </div>
-                    <div className="h-2 bg-surface-600 rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${submitResult.passRate}%` }}
-                        transition={{ duration: 0.8, ease: 'easeOut' }}
-                        className={`h-full rounded-full ${submitResult.passRate === 100 ? 'bg-emerald-500' : submitResult.passRate >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                    <div className="h-1.5 rounded-full bg-ink-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-accent-600"
+                        style={{ width: `${submitResult.passRate}%` }}
                       />
                     </div>
                   </div>
 
-                  {/* Test cases */}
                   <div className="space-y-2">
                     {(submitResult.testResults || []).map((r, i) => (
-                      <div key={i} className={`rounded-xl p-3 border text-xs
-                        ${r.passed ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
-                        <div className="flex items-center gap-2 mb-1">
+                      <div key={i} className="rounded-lg border border-line px-3 py-2">
+                        <div className="flex items-center gap-1.5">
                           {r.passed
-                            ? <CheckCircle size={13} className="text-emerald-400" />
-                            : <XCircle size={13} className="text-red-400" />}
-                          <span className={r.passed ? 'text-emerald-300' : 'text-red-300'}>
-                            Test {i + 1} {r.passed ? 'Passed' : 'Failed'}
+                            ? <CheckCircle2 size={12} className="text-positive-600" strokeWidth={1.8} />
+                            : <XCircle size={12} className="text-danger-600" strokeWidth={1.8} />}
+                          <span className="text-[12px] text-ink-800">
+                            Test {i + 1} {r.passed ? 'passed' : 'failed'}
                           </span>
-                          {r.time && <span className="text-slate-500 ml-auto">{r.time}</span>}
+                          {r.time && <span className="num text-[11px] text-ink-400 ml-auto">{r.time}</span>}
                         </div>
                         {!r.passed && (
-                          <div className="mt-2 space-y-1 font-mono">
-                            {r.input !== '(hidden)' && <p className="text-slate-400">Input: <span className="text-slate-300">{r.input}</span></p>}
-                            {r.expected !== '(hidden)' && <p className="text-slate-400">Expected: <span className="text-emerald-300">{r.expected}</span></p>}
-                            <p className="text-slate-400">Got: <span className="text-red-300">{r.actual || r.error || '(empty)'}</span></p>
+                          <div className="num text-[11px] text-ink-600 mt-1.5 space-y-0.5 break-words">
+                            {r.input !== '(hidden)' && <p>input: {r.input}</p>}
+                            {r.expected !== '(hidden)' && <p>expected: {r.expected}</p>}
+                            <p>got: {r.actual || r.error || '(empty)'}</p>
                           </div>
                         )}
                       </div>
                     ))}
                   </div>
-                </div>
+                </>
               )}
 
               {!runResult && !submitResult && (
-                <div className="text-center py-10">
-                  <Play className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                  <p className="text-slate-500 text-sm">Run or Submit your code to see results</p>
-                </div>
+                <EmptyState
+                  icon={Play}
+                  title="No output yet"
+                  description="Run the code for a quick check, or submit it against the test cases."
+                />
               )}
             </div>
           )}
 
-          {/* ── AI Evaluation ── */}
           {activeTab === 'ai' && (
-            <div className="p-4 space-y-4">
-              {submitResult?.aiEval && submitResult.aiEval.score != null ? (
+            <div className="space-y-4">
+              {submitResult?.aiEval?.score != null ? (
                 <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">AI Code Review</p>
-                    <span className="text-2xl font-bold text-white">{submitResult.aiEval.score}<span className="text-slate-500 text-sm">/100</span></span>
+                  <div className="flex items-baseline justify-between">
+                    <p className="text-[11.5px] text-ink-500">AI code review</p>
+                    <p className="num text-[20px] font-medium text-ink-900">
+                      {submitResult.aiEval.score}
+                      <span className="text-[12px] text-ink-400">/100</span>
+                    </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+
+                  <dl className="grid grid-cols-2 gap-2">
                     {[
-                      { label: 'Time',    value: submitResult.aiEval.timeComplexity  },
-                      { label: 'Space',   value: submitResult.aiEval.spaceComplexity },
-                      { label: 'Quality', value: submitResult.aiEval.codeQuality    },
+                      { label: 'Time', value: submitResult.aiEval.timeComplexity },
+                      { label: 'Space', value: submitResult.aiEval.spaceComplexity },
+                      { label: 'Quality', value: submitResult.aiEval.codeQuality },
                       { label: 'Correctness', value: `${submitResult.aiEval.correctness}%` },
-                    ].map(({label, value}) => (
-                      <div key={label} className="bg-surface-900 rounded-xl p-2.5 text-center">
-                        <p className="text-slate-500 text-[10px] mb-0.5">{label}</p>
-                        <p className="text-white text-xs font-semibold">{value}</p>
+                    ].map(({ label, value }) => (
+                      <div key={label} className="surface-inset px-2.5 py-2">
+                        <dt className="text-[10.5px] text-ink-500">{label}</dt>
+                        <dd className="num text-[12px] text-ink-800 mt-0.5">{value ?? '—'}</dd>
                       </div>
                     ))}
-                  </div>
-                  <div>
-                    <p className="text-slate-400 text-xs font-semibold mb-2">Feedback</p>
-                    <p className="text-slate-300 text-xs leading-relaxed">{submitResult.aiEval.feedback}</p>
-                  </div>
+                  </dl>
+
+                  {submitResult.aiEval.feedback && (
+                    <div>
+                      <p className="text-[11.5px] text-ink-500 mb-1">Feedback</p>
+                      <p className="text-[12.5px] text-ink-700 leading-6">{submitResult.aiEval.feedback}</p>
+                    </div>
+                  )}
+
                   {submitResult.aiEval.improvements?.length > 0 && (
                     <div>
-                      <p className="text-slate-400 text-xs font-semibold mb-2">Improvements</p>
+                      <p className="text-[11.5px] text-ink-500 mb-1.5">Improvements</p>
                       <ul className="space-y-1.5">
                         {submitResult.aiEval.improvements.map((s, i) => (
-                          <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
-                            <ChevronRight size={12} className="text-primary-400 mt-0.5 flex-shrink-0" /> {s}
+                          <li key={i} className="text-[12.5px] text-ink-700 leading-5 flex gap-2">
+                            <span className="num text-[11px] text-ink-400 mt-0.5">{i + 1}</span>
+                            {s}
                           </li>
                         ))}
                       </ul>
@@ -474,10 +479,11 @@ export default function CodingPage() {
                   )}
                 </>
               ) : (
-                <div className="text-center py-10">
-                  <Trophy className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                  <p className="text-slate-500 text-sm">Submit your code to get AI evaluation</p>
-                </div>
+                <EmptyState
+                  icon={Code2}
+                  title="No review yet"
+                  description="Submit a solution and the AI review appears here."
+                />
               )}
             </div>
           )}

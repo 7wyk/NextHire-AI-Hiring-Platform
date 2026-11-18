@@ -51,6 +51,9 @@ const submissionSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Revision of the test this submission was graded against (CA-06)
+    testRevision: { type: Number, default: null },
+
     // Submitted code
     code:     { type: String, required: true },
     language: { type: String, required: true },
@@ -94,5 +97,16 @@ const submissionSchema = new mongoose.Schema(
 submissionSchema.index({ userId: 1, jobId: 1, createdAt: -1 })
 // Standalone problem submissions
 submissionSchema.index({ userId: 1, problemId: 1, createdAt: -1 })
+// One job assessment submission per candidate. The controller checks first, but
+// this index is the backstop for two concurrent submits. Standalone problem
+// submissions (jobId: null) are unaffected by the partial filter.
+submissionSchema.index(
+  { userId: 1, jobId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { jobId: { $type: 'objectId' } },
+    name: 'unique_job_submission_per_candidate',
+  }
+)
 
 export default mongoose.model('Submission', submissionSchema)

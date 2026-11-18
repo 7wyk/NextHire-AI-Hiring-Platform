@@ -11,6 +11,8 @@ import Job from '../models/Job.js'
 import Application from '../models/Application.js'
 import Submission from '../models/Submission.js'
 import InterviewSession from '../models/InterviewSession.js'
+import User from '../models/User.js'
+import { normaliseEmail, applyScoreUpdate } from '../services/candidateProfile.service.js'
 
 // ── getCandidate ──────────────────────────────────────────────────────────────
 
@@ -32,7 +34,14 @@ class GetCandidateTool extends MCPTool {
       return Candidate.findById(candidateId).lean()
     }
     if (userId) {
-      const filter = { createdBy: userId }
+      // `createdBy` is the RECRUITER who owns the profile. A candidate user id
+      // there matched nothing (or the wrong row), so resolve the candidate's
+      // email and look the recruiter-owned profile up on (email[, job]).
+      const user = await User.findById(userId).select('email').lean()
+      const email = normaliseEmail(user?.email)
+      if (!email) throw new Error(`Candidate user not found: ${userId}`)
+
+      const filter = { email }
       if (jobId) filter.job = jobId
       return Candidate.findOne(filter).sort({ resumeScore: -1 }).lean()
     }
@@ -112,26 +121,20 @@ class SaveScoreTool extends MCPTool {
   async _execute({ userId, jobId, resumeScore, codeScore, interviewScore }) {
     if (!userId || !jobId) throw new Error('userId and jobId are required')
 
-    let candidate = await Candidate.findOne({ createdBy: userId, job: jobId })
-    if (!candidate) {
-      candidate = await Candidate.findOne({ createdBy: userId }).sort({ resumeScore: -1 })
+    // One write path: the scoring service resolves the profile by (job, email),
+    // clamps the components and recomputes the composite with the shared
+    // formula. No local weights, no `createdBy` identity lookup.
+    const profile = await applyScoreUpdate({
+      candidateUserId: userId,
+      jobId,
+      updates: { resumeScore, codeScore, interviewScore },
+    })
+
+    if (!profile) {
+      throw new Error('Candidate record could not be resolved for this user and job')
     }
-    if (!candidate) throw new Error('Candidate record not found')
 
-    const WEIGHTS = { resume: 0.3, code: 0.4, interview: 0.3 }
-
-    if (resumeScore !== undefined) candidate.resumeScore = resumeScore
-    if (codeScore !== undefined) candidate.codeScore = codeScore
-    if (interviewScore !== undefined) candidate.interviewScore = interviewScore
-
-    candidate.totalScore = Math.round(
-      (candidate.resumeScore || 0) * WEIGHTS.resume +
-      (candidate.codeScore || 0) * WEIGHTS.code +
-      (candidate.interviewScore || 0) * WEIGHTS.interview
-    )
-
-    await candidate.save()
-    return candidate.toObject()
+    return profile.toObject()
   }
 }
 

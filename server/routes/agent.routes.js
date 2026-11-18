@@ -7,7 +7,8 @@
  */
 
 import { Router } from 'express'
-import { protect } from '../middlewares/auth.middleware.js'
+import { protect, authorize } from '../middlewares/auth.middleware.js'
+import { agentMonitorLimiter, aiLimiter } from '../middlewares/rateLimit.middleware.js'
 import { supervisorAgent } from '../agents/supervisor.agent.js'
 import { mcpRegistry } from '../mcp/base.mcp.js'
 import { searchCandidates } from '../services/vectorless.service.js'
@@ -15,13 +16,14 @@ import logger from '../config/logger.js'
 
 const router = Router()
 
-// All agent routes require authentication
-router.use(protect)
+// Agent tooling is internal recruiter infrastructure. Authentication alone let
+// candidates read agent status and execute recruiter tasks (SEC-07).
+router.use(protect, authorize('recruiter', 'admin'))
 
 // ─── GET /api/agents/status ──────────────────────────────────────────────────
 // Returns status of all agents (for Agent Monitor dashboard)
 // ──────────────────────────────────────────────────────────────────────────────
-router.get('/status', (req, res) => {
+router.get('/status', agentMonitorLimiter, (req, res) => {
   try {
     const statuses = supervisorAgent.getAllAgentStatuses()
     res.json(statuses)
@@ -64,7 +66,7 @@ router.get('/tools', (req, res) => {
 // Recruiter AI Assistant — natural language chat interface
 // Body: { message: string, jobId?: string }
 // ──────────────────────────────────────────────────────────────────────────────
-router.post('/chat', async (req, res) => {
+router.post('/chat', aiLimiter, async (req, res) => {
   try {
     const { message, jobId } = req.body
 
@@ -95,7 +97,7 @@ router.post('/chat', async (req, res) => {
 // Execute a specific agent task (advanced API)
 // Body: { type: string, ...taskData }
 // ──────────────────────────────────────────────────────────────────────────────
-router.post('/execute', async (req, res) => {
+router.post('/execute', aiLimiter, async (req, res) => {
   try {
     const task = req.body
     if (!task.type) {

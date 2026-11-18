@@ -4,8 +4,9 @@
  * Usage:
  *   import { getSocket, disconnectSocket } from './socket'
  *
- * The socket connects to /notifications namespace and authenticates
- * using the stored JWT token. Call connectSocket() after login.
+ * The socket connects to the /notifications namespace and authenticates with
+ * the same HttpOnly session cookie the REST API uses — no token is available
+ * to JavaScript (SEC-04), so `withCredentials` carries the session instead.
  */
 
 import { io } from 'socket.io-client'
@@ -16,9 +17,9 @@ let socket = null
 
 /**
  * Get or create the socket connection.
- * Authenticates with the current stored token.
+ * The handshake carries the session cookie; the server verifies it.
  */
-export const getSocket = (token) => {
+export const getSocket = () => {
   if (socket?.connected) return socket
 
   // Disconnect stale socket if exists
@@ -28,7 +29,7 @@ export const getSocket = (token) => {
   }
 
   socket = io(`${BASE_URL}/notifications`, {
-    auth:        { token },
+    withCredentials: true,
     transports:  ['websocket', 'polling'],
     reconnection: true,
     reconnectionAttempts: 5,

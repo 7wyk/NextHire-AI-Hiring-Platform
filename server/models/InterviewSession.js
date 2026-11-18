@@ -40,14 +40,41 @@ const interviewSessionSchema = new mongoose.Schema({
     answerText: { type: String, default: '' },
     score:      { type: Number, default: 0 },
     feedback:   { type: String, default: '' },
+    // False only when AI evaluation failed: the answer is kept but must not be
+    // counted as a genuine zero in the final average.
+    evaluated:  { type: Boolean, default: true },
   }],
   finalScore:  { type: Number, default: 0 },
+  // Whether the final score came from a real AI evaluation. 'unavailable'
+  // means the interview finished but nothing could be evaluated — the score
+  // must not be presented as a real (zero) result.
+  evaluationStatus: {
+    type: String,
+    enum: ['pending', 'evaluated', 'unavailable'],
+    default: 'pending',
+  },
   completed:   { type: Boolean, default: false },
   initiatedBy: { type: String, enum: ['recruiter', 'candidate'], default: 'recruiter' },
 
   startedAt:   { type: Date },
+  // When a recruiter books the interview, the candidate is told this slot.
+  scheduledAt: { type: Date },
   completedAt: { type: Date },
   durationMin: { type: Number },
 }, { timestamps: true })
+
+// Recruiter workspace resolves a candidate's interview state per job
+interviewSessionSchema.index({ job: 1, candidate: 1, initiatedBy: 1 })
+// One candidate-initiated interview per candidate per job. Recruiter-initiated
+// rounds are untouched because of the partial filter.
+interviewSessionSchema.index(
+  { candidate: 1, job: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { initiatedBy: 'candidate' },
+    name: 'unique_candidate_interview_per_job',
+  }
+)
+interviewSessionSchema.index({ completed: 1, completedAt: -1 })
 
 export default mongoose.model('InterviewSession', interviewSessionSchema)
